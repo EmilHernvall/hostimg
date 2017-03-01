@@ -12,8 +12,8 @@ use std::env;
 use std::fs::{create_dir};
 use std::path::{PathBuf};
 
-use db::{DataStore};
-use file::{GalleryScanner, ImageFile};
+use db::DataStore;
+use file::GalleryScanner;
 
 mod db;
 mod file;

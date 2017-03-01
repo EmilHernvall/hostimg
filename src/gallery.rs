@@ -1,15 +1,14 @@
-use std::path::Path;
-use std::io::{Result, Error, ErrorKind, Read};
+use std::io::Result;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::fs::File;
 
 use regex::{Regex,Captures};
-use tiny_http::{Response, Header, HeaderField, Request, Method, StatusCode};
+use tiny_http::{Response, Header, HeaderField, Request};
 use rustc_serialize::json::{ToJson, Json};
 
 use context::ServerContext;
-use web::{WebServer,Action};
+use web::{WebServer,Action,url_decode};
 
 pub struct GalleryAction {
     context: Arc<ServerContext>
@@ -47,11 +46,10 @@ impl Action for GalleryAction {
         };
 
         let gallery = caps.get(1)
-            .map(|x| Path::new(x.as_str()))
-            .and_then(|x| root_gallery.find_gallery_from_name(x))
+            .map(|x| url_decode(x.as_str()))
+            .map(|x| x.into())
+            .and_then(|x| root_gallery.find_gallery_from_name(&x))
             .unwrap_or(root_gallery);
-
-        println!("parent: {:?}", gallery.get_parent());
 
         let mut sub_galleries = Vec::new();
         for sub_gallery in &gallery.sub_galleries {
@@ -116,7 +114,7 @@ impl Action for ImageAction {
         Regex::new(r"^/image/(.+)/(.+)$").unwrap()
     }
 
-    fn initialize(&self, server: &mut WebServer) {
+    fn initialize(&self, _: &mut WebServer) {
     }
 
     fn handle(&self,

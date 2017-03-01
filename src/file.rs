@@ -63,7 +63,8 @@ impl<'a> GalleryScanner<'a> {
 
     pub fn scan(&mut self) -> Result<()> {
         let gallery_dir = &self.context.gallery_dir.clone();
-        self.context.root_gallery = Some(Arc::new(self.scan_recursive(gallery_dir, &is_image)?));
+        self.context.root_gallery = Some(Arc::new(self.scan_recursive(gallery_dir,
+                                                                      &is_image)?));
         Ok(())
     }
 
@@ -190,9 +191,9 @@ impl ImageGallery {
             .unwrap_or("".to_string())
     }
 
-    pub fn find_gallery_from_name(&self, search_path: &Path) -> Option<Arc<ImageGallery>> {
+    pub fn find_gallery_from_name(&self, search_path: &PathBuf) -> Option<Arc<ImageGallery>> {
         for gallery in &self.sub_galleries {
-            if gallery.path == search_path {
+            if gallery.path.as_path() == search_path.as_path() {
                 return Some(gallery.clone());
             } else if search_path.starts_with(&gallery.path) {
                 match gallery.find_gallery_from_name(search_path) {

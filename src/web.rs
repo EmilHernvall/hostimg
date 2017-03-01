@@ -7,6 +7,39 @@ use handlebars::Handlebars;
 
 use context::ServerContext;
 
+fn hex_to_num(c: char) -> u8 {
+    match c {
+        '0'...'9' => (c as u8) - (b'0' as u8),
+        'a'...'f' => (c as u8) - (b'a' as u8) + 0xA,
+        'A'...'F' => (c as u8) - (b'A' as u8) + 0xA,
+        _ => 0
+    }
+}
+
+pub fn url_decode(instr: &str) -> String {
+    let src_buffer = instr.as_bytes();
+
+    let mut pos = 0;
+    let len = instr.len();
+    let mut buffer = String::new();
+    while pos < len {
+        let cur = src_buffer[pos] as char;
+        if cur == '%' {
+            let a = hex_to_num(src_buffer[pos+1] as char);
+            let b = hex_to_num(src_buffer[pos+2] as char);
+            let new_char = ((a << 4) | b) as char;
+            buffer.push(new_char);
+            pos += 2;
+        } else {
+            buffer.push(cur);
+        }
+
+        pos += 1;
+    }
+
+    buffer
+}
+
 pub trait Action {
     fn get_regex(&self) -> Regex;
     fn initialize(&self, server: &mut WebServer);
