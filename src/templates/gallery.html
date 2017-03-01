@@ -1,0 +1,121 @@
+{{#partial "title"}}Gallery: {{name}}{{/partial}}
+{{#partial "header"}}
+<style type="text/css">
+.columns {
+    overflow: auto;
+}
+.main_content {
+    padding: 0;
+}
+.main_content h2 {
+    padding-left: 10px;
+}
+#gallery_list {
+    width: 20%;
+    float: left;
+}
+#gallery_list ul {
+    margin: 0;
+    padding: 0;
+}
+#gallery_list ul li {
+    margin: 0;
+    padding: 10px;
+    list-style-type: none;
+    background-color: #eee;
+    border-top: 1px solid #999;
+}
+#images {
+    width: 80%;
+    float: right;
+    font-size: 0;
+}
+#images div.image {
+    display: inline-block;
+}
+#images div.image img {
+    width: 100%;
+}
+</style>
+{{/partial}}
+{{#partial "content"}}
+<div class="columns">
+    <div id="gallery_list">
+        <ul>
+            {{#if has_parent}}
+            <li><a href="/gallery/{{parent}}">..</a></li>
+            {{/if}}
+            {{#each sub_galleries}}
+            <li><a href="/gallery/{{path}}">{{name}}</a></li>
+            {{/each}}
+        </ul>
+    </div>
+
+    <div id="images">
+        {{#each images}}
+        <div class="image" data-width="{{width}}" data-height="{{height}}">
+            <img src="/image/{{hash}}/thumb" />
+        </div>
+        {{/each}}
+    </div>
+</div>
+<script type="text/javascript">
+var updateBatch = function(workingSet, height) {
+    for (var i = 0; i < workingSet.length; i++) {
+        var image = workingSet[i],
+            width = image.aspectRatio * height - 1;
+        image.image.style.width = width + "px";
+        image.image.style.height = height + "px";
+    }
+};
+var updateImageSizes = function() {
+    console.log("updateImageSizes");
+
+    var containerWidth = document.querySelector("#images").offsetWidth;
+
+    var images = document.querySelectorAll(".image");
+    var aspectSum = 0;
+    var workingSet = [],
+        prevWorkingSet = null;
+    var maxHeight = 200;
+    for (var i = 0; i < images.length; i++) {
+        var image = images[i],
+            nativeWidth = +image.dataset["width"],
+            nativeHeight = +image.dataset["height"],
+            aspectRatio = nativeWidth/nativeHeight;
+
+        workingSet.push({
+            image: image,
+            aspectRatio: aspectRatio
+        });
+
+        aspectSum += aspectRatio;
+
+        var targetHeight = containerWidth/aspectSum;
+        if (targetHeight <= maxHeight) {
+            updateBatch(workingSet, targetHeight);
+            aspectSum = 0;
+            prevWorkingSet = workingSet;
+            workingSet = [];
+        }
+    }
+
+    if (prevWorkingSet !== null) {
+        var workingSet = prevWorkingSet.concat(workingSet);
+        var aspectSum = 0;
+        for (var i = 0; i < workingSet.length; i++) {
+            aspectSum += workingSet[i].aspectRatio;
+        }
+
+        var targetHeight = containerWidth/aspectSum;
+        updateBatch(workingSet, targetHeight);
+    } else {
+        updateBatch(workingSet, 256);
+    }
+};
+updateImageSizes();
+window.addEventListener("load", updateImageSizes);
+window.addEventListener("resize", updateImageSizes);
+</script>
+{{/partial}}
+{{> layout}}
