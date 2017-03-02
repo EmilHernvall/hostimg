@@ -1,5 +1,6 @@
 use std::io::{Result, Error, ErrorKind};
 use std::sync::Arc;
+use std::thread;
 
 use regex::{Regex,Captures};
 use tiny_http::{Server, Response, StatusCode, Request};
@@ -42,39 +43,59 @@ pub fn url_decode(instr: &str) -> String {
 
 pub trait Action {
     fn get_regex(&self) -> Regex;
-    fn initialize(&self, server: &mut WebServer);
+    fn initialize(&self, server: &mut WebServer) -> Result<()>;
     fn handle(&self,
-              server: &WebServer,
               request: Request,
-              path_match: &Captures) -> Result<()>;
+              path_match: &Captures,
+              handlebars: Arc<Handlebars>) -> Result<()>;
 }
 
 pub struct WebServer {
     pub context: Arc<ServerContext>,
-    pub handlebars: Handlebars,
-    pub actions: Vec<Box<Action>>
+    pub handlebars: Arc<Handlebars>,
+    pub actions: Arc<Vec<Box<Action + Send + Sync>>>
 }
 
 impl WebServer {
 
-    pub fn new(context: Arc<ServerContext>) -> WebServer {
+    pub fn new(context: Arc<ServerContext>) -> Result<WebServer> {
         let mut server = WebServer {
             context: context,
-            handlebars: Handlebars::new(),
-            actions: Vec::new()
+            handlebars: Arc::new(Handlebars::new()),
+            actions: Arc::new(Vec::new())
         };
 
         let tpl_data = include_str!("templates/layout.html").to_string();
-        if !server.handlebars.register_template_string("layout", tpl_data).is_ok() {
-            println!("Failed to register layout template");
-        }
+        server.register_template("layout", tpl_data)?;
 
-        server
+        Ok(server)
     }
 
-    pub fn register_action(&mut self, action: Box<Action>) {
-        action.initialize(self);
-        self.actions.push(action);
+    pub fn register_template(&mut self, name: &str, tpl_data: String) -> Result<()> {
+        match Arc::get_mut(&mut self.handlebars) {
+            Some(mut handlebars) => {
+                handlebars.register_template_string(name, tpl_data)
+                    .or(Err(Error::new(ErrorKind::Other, format!("Failed to register template {}", name))))
+            },
+            None => {
+                Err(Error::new(ErrorKind::Other, "Failed to acquire handlebars mutably"))
+            }
+        }
+    }
+
+    pub fn register_action(&mut self, action: Box<Action + Send + Sync>) -> Result<()> {
+        action.initialize(self)?;
+
+        match Arc::get_mut(&mut self.actions) {
+            Some(mut actions) => {
+                actions.push(action);
+            },
+            None => {
+                return Err(Error::new(ErrorKind::Other, "Failed to acquire actions mutably"));
+            }
+        }
+
+        Ok(())
     }
 
     pub fn run_webserver(self)
@@ -89,29 +110,51 @@ impl WebServer {
 
         let webserver = Arc::new(webserver);
 
-        for request in webserver.incoming_requests() {
-            println!("HTTP {:?} {:?}", request.method(), request.url());
+        let mut guards = Vec::with_capacity(self.context.server_threads);
+        for _ in 0..self.context.server_threads {
+            let webserver = webserver.clone();
+            let handlebars = self.handlebars.clone();
+            let actions = self.actions.clone();
+            let guard = thread::spawn(move || {
+                loop {
+                    let request = match webserver.recv() {
+                        Ok(x) => x,
+                        Err(e) => {
+                            println!("Failed to retrieve request: {:?}", e);
+                            continue;
+                        }
+                    };
 
-            let matching_actions : Vec<&Box<Action>> =
-                self.actions.iter().filter(|x| x.get_regex().is_match(&request.url())).collect();
+                    println!("HTTP {:?} {:?}", request.method(), request.url());
 
-            if matching_actions.is_empty() {
-                let response = Response::empty(StatusCode(404));
-                let _ = request.respond(response);
-            } else {
-                let action = &matching_actions[0];
-                if let Some(caps) = action.get_regex().captures(&request.url().to_string()) {
-                    let _ = action.handle(&self, request, &caps);
+                    let matching_actions : Vec<&Box<Action + Send + Sync>> = actions.iter()
+                        .filter(|x| x.get_regex().is_match(&request.url()))
+                        .collect();
+
+                    if matching_actions.is_empty() {
+                        let response = Response::empty(StatusCode(404));
+                        let _ = request.respond(response);
+                    } else {
+                        let action = &matching_actions[0];
+                        if let Some(caps) = action.get_regex().captures(&request.url().to_string()) {
+                            let _ = action.handle(request, &caps, handlebars.clone());
+                        }
+                    }
                 }
-            }
-        }
-    }
+            });
 
-    pub fn error_response(&self, request: Request, error: &str) -> Result<()>
-    {
-        let response = Response::empty(StatusCode(400));
-        let _ = request.respond(response);
-        Err(Error::new(ErrorKind::InvalidInput, error))
+            guards.push(guard);
+        }
+
+        for guard in guards {
+            let _ = guard.join();
+        }
     }
 }
 
+pub fn error_response(request: Request, error: &str) -> Result<()>
+{
+    let response = Response::empty(StatusCode(400));
+    let _ = request.respond(response);
+    Err(Error::new(ErrorKind::InvalidInput, error))
+}

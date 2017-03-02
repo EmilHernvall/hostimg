@@ -1,7 +1,7 @@
 extern crate sha2;
 extern crate image;
 
-use std::sync::Arc;
+use std::sync::{Arc};
 use std::fs::{read_dir, File};
 use std::path::{Path,PathBuf};
 use std::io::{Read, BufReader, Result, ErrorKind};
@@ -111,7 +111,10 @@ impl<'a> GalleryScanner<'a> {
             None => return Err(build_error("Failed to retrieve filename"))
         };
 
-        let query_result = self.context.datastore.find_image_by_name(file_name.to_string())?;
+        let query_result = match self.context.datastore.read() {
+            Ok(datastore) => datastore.find_image_by_name(file_name.to_string())?,
+            Err(_) => return Err(build_error("Failed to acquire read lock for database"))
+        };
 
         if let Some(info) = query_result {
             println!("Found {}", &info.name);
@@ -129,13 +132,17 @@ impl<'a> GalleryScanner<'a> {
                 println!("Failed to save thumb for image {}: {:?}", file_name, e);
             }
 
-            match image_file.build_info() {
-                Some(info) => {
-                    self.context.datastore.save_image(&info)?;
-                    return Ok(info);
-                },
+            let info = match image_file.build_info() {
+                Some(info) => info,
                 None => return Err(build_error(format!("Well, this is rather inexplicable. Image: {}", file_name).as_str()))
-            }
+            };
+
+            match self.context.datastore.write() {
+                Ok(mut datastore) => datastore.save_image(&info)?,
+                Err(_) => return Err(build_error("Failed to acquire read lock for database"))
+            };
+
+            return Ok(info);
         }
     }
 }

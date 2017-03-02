@@ -6,8 +6,9 @@ extern crate regex;
 extern crate handlebars;
 extern crate rustc_serialize;
 extern crate ascii;
+extern crate chrono;
 
-use std::sync::Arc;
+use std::sync::{Arc,RwLock};
 use std::env;
 use std::fs::{create_dir};
 use std::path::{PathBuf};
@@ -79,13 +80,13 @@ fn main() {
 
         root_gallery: None,
 
-        datastore: store
+        datastore: RwLock::new(store)
     };
 
     {
         let mut scanner = GalleryScanner::new(&mut context);
         if let Err(e) = scanner.scan() {
-            println!("Scanning of file system failed");
+            println!("Scanning of file system failed: {:?}", e);
             return;
         }
     }
@@ -94,11 +95,21 @@ fn main() {
 
     let context = Arc::new(context);
 
-    let mut server = web::WebServer::new(context.clone());
-    server.register_action(Box::new(gallery::GalleryAction::new(context.clone())));
-    server.register_action(Box::new(gallery::ImageAction::new(context.clone())));
+    match web::WebServer::new(context.clone()) {
+        Ok(mut server) => {
+            if let Err(e) = server.register_action(Box::new(gallery::GalleryAction::new(context.clone()))) {
+                println!("Failed to register GalleryAction: {:?}", e);
+            }
+            if let Err(e) = server.register_action(Box::new(gallery::ImageAction::new(context.clone()))) {
+                println!("Failed to register ImageAction: {:?}", e);
+            }
 
-    server.run_webserver();
+            server.run_webserver();
+        },
+        Err(e) => {
+            println!("Server failed to start: {:?}", e);
+        }
+    }
 }
 
 #[cfg(test)]

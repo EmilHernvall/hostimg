@@ -186,9 +186,13 @@ var createLightbox = function() {
             currentWidth = currentHeight * aspectRatio;
         }
 
-        image.style.width = currentWidth + "px";
-        image.style.height = currentHeight + "px";
-        image.src = "/image/" + hash + "/preview";
+        var preloader = new Image();
+        preloader.addEventListener("load", function() {
+            image.style.width = currentWidth + "px";
+            image.style.height = currentHeight + "px";
+            image.src = "/image/" + hash + "/preview";
+        });
+        preloader.src = "/image/" + hash + "/preview";
     };
     obj.show = function() {
         this.visible = true;
