@@ -7,11 +7,13 @@ extern crate handlebars;
 extern crate rustc_serialize;
 extern crate ascii;
 extern crate chrono;
+extern crate notify;
 
 use std::sync::{Arc,RwLock};
 use std::env;
 use std::fs::{create_dir};
 use std::path::{PathBuf};
+use std::cell::RefCell;
 
 use db::DataStore;
 use file::GalleryScanner;
@@ -70,7 +72,7 @@ fn main() {
         }
     };
 
-    let mut context = context::ServerContext {
+    let context = Arc::new(context::ServerContext {
         port: 1080,
         server_threads: 4,
 
@@ -78,22 +80,18 @@ fn main() {
         thumb_dir: thumb_dir,
         preview_dir: preview_dir,
 
-        root_gallery: None,
+        root_gallery: RefCell::new(None),
 
         datastore: RwLock::new(store)
-    };
+    });
 
-    {
-        let mut scanner = GalleryScanner::new(&mut context);
-        if let Err(e) = scanner.scan() {
-            println!("Scanning of file system failed: {:?}", e);
-            return;
-        }
+    let mut scanner = GalleryScanner::new(context.clone());
+    if let Err(e) = scanner.scan() {
+        println!("Scanning of file system failed: {:?}", e);
+        return;
     }
 
     println!("Running");
-
-    let context = Arc::new(context);
 
     match web::WebServer::new(context.clone()) {
         Ok(mut server) => {
@@ -104,12 +102,14 @@ fn main() {
                 println!("Failed to register ImageAction: {:?}", e);
             }
 
-            server.run_webserver();
+            server.run_webserver(false);
         },
         Err(e) => {
             println!("Server failed to start: {:?}", e);
         }
     }
+
+    let _ = scanner.monitor();
 }
 
 #[cfg(test)]

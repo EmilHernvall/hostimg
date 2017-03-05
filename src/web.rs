@@ -98,7 +98,7 @@ impl WebServer {
         Ok(())
     }
 
-    pub fn run_webserver(self)
+    pub fn run_webserver(self, join: bool)
     {
         let webserver = match Server::http(("0.0.0.0", self.context.port)) {
             Ok(x) => x,
@@ -146,8 +146,10 @@ impl WebServer {
             guards.push(guard);
         }
 
-        for guard in guards {
-            let _ = guard.join();
+        if join {
+            for guard in guards {
+                let _ = guard.join();
+            }
         }
     }
 }

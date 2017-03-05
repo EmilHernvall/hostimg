@@ -43,9 +43,9 @@ impl Action for GalleryAction {
               caps: &Captures,
               handlebars: Arc<Handlebars>) -> Result<()> {
 
-        let root_gallery = match self.context.root_gallery {
-            Some(ref x) => x.clone(),
-            None => return error_response(request, "No root gallery found")
+        let root_gallery = match self.context.get_root_gallery() {
+            Ok(ref x) => x.clone(),
+            Err(_) => return error_response(request, "No root gallery found")
         };
 
         let gallery = caps.get(1)
