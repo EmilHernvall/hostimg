@@ -33,7 +33,7 @@ impl Action for GalleryAction {
 
     fn initialize(&self, server: &mut WebServer) -> Result<()> {
         let tpl_data = include_str!("templates/gallery.html").to_string();
-        server.register_template("gallery", tpl_data)?;
+        server.register_template("gallery", tpl_data);
 
         Ok(())
     }

@@ -50,10 +50,17 @@ pub trait Action {
               handlebars: Arc<Handlebars>) -> Result<()>;
 }
 
+struct Template {
+    name: String,
+    content: String
+}
+
+pub type ThreadsafeAction = Box<Action + Send + Sync>;
+
 pub struct WebServer {
     pub context: Arc<ServerContext>,
-    pub handlebars: Arc<Handlebars>,
-    pub actions: Arc<Vec<Box<Action + Send + Sync>>>
+    actions: Vec<Arc<ThreadsafeAction>>,
+    templates: Vec<Template>
 }
 
 impl WebServer {
@@ -61,45 +68,42 @@ impl WebServer {
     pub fn new(context: Arc<ServerContext>) -> Result<WebServer> {
         let mut server = WebServer {
             context: context,
-            handlebars: Arc::new(Handlebars::new()),
-            actions: Arc::new(Vec::new())
+            templates: Vec::new(),
+            actions: Vec::new()
         };
 
         let tpl_data = include_str!("templates/layout.html").to_string();
-        server.register_template("layout", tpl_data)?;
+        server.register_template("layout", tpl_data);
 
         Ok(server)
     }
 
-    pub fn register_template(&mut self, name: &str, tpl_data: String) -> Result<()> {
-        match Arc::get_mut(&mut self.handlebars) {
-            Some(mut handlebars) => {
-                handlebars.register_template_string(name, tpl_data)
-                    .or(Err(Error::new(ErrorKind::Other, format!("Failed to register template {}", name))))
-            },
-            None => {
-                Err(Error::new(ErrorKind::Other, "Failed to acquire handlebars mutably"))
-            }
-        }
+    pub fn register_template(&mut self, name: &str, tpl_data: String) {
+        self.templates.push(Template {
+            name: name.to_string(),
+            content: tpl_data
+        });
     }
 
-    pub fn register_action(&mut self, action: Box<Action + Send + Sync>) -> Result<()> {
-        action.initialize(self)?;
+    pub fn register_action(&mut self, action: ThreadsafeAction) -> Result<()> {
 
-        match Arc::get_mut(&mut self.actions) {
-            Some(mut actions) => {
-                actions.push(action);
-            },
-            None => {
-                return Err(Error::new(ErrorKind::Other, "Failed to acquire actions mutably"));
-            }
-        }
+        action.initialize(self)?;
+        self.actions.push(Arc::new(action));
 
         Ok(())
     }
 
     pub fn run_webserver(self, join: bool)
     {
+        let mut handlebars = Handlebars::new();
+        for template in self.templates {
+            if let Err(e) = handlebars.register_template_string(template.name.as_str(), template.content) {
+                println!("Failed to register template {}: {:?}", template.name, e);
+            }
+        }
+
+        let handlebars = Arc::new(handlebars);
+
         let webserver = match Server::http(("0.0.0.0", self.context.port)) {
             Ok(x) => x,
             Err(e) => {
@@ -113,8 +117,13 @@ impl WebServer {
         let mut guards = Vec::with_capacity(self.context.server_threads);
         for _ in 0..self.context.server_threads {
             let webserver = webserver.clone();
-            let handlebars = self.handlebars.clone();
-            let actions = self.actions.clone();
+            let handlebars = handlebars.clone();
+
+            let mut actions = Vec::new();
+            for action in &self.actions {
+                actions.push(action.clone());
+            }
+
             let guard = thread::spawn(move || {
                 loop {
                     let request = match webserver.recv() {
@@ -127,7 +136,7 @@ impl WebServer {
 
                     println!("HTTP {:?} {:?}", request.method(), request.url());
 
-                    let matching_actions : Vec<&Box<Action + Send + Sync>> = actions.iter()
+                    let matching_actions : Vec<&Arc<ThreadsafeAction>> = actions.iter()
                         .filter(|x| x.get_regex().is_match(&request.url()))
                         .collect();
 
