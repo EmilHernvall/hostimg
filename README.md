@@ -8,5 +8,13 @@ generating thumbs and scaled copies of each new image.
 
 Current Status: Will index the specified directory during startup, and launch
 a web server on port 1080 which will serve images at /gallery. Works quite
-well, but could use a lot more polish. inotify-support is still missing, and so
-is daemonization.
+well, but could use a lot more polish.
+
+Todo:
+
+ * Allow users to download a single image, in a lower res or in the original
+   resolution.
+ * Support selecting many images and downloading as a zip bundle.
+ * Login support
+ * Meta data: caption, tags, etc.
+ * Finger print-based duplicate detection
