@@ -85,15 +85,21 @@ impl Action for GalleryAction {
         result_dict.insert("images".to_string(), images);
         let result_obj = Json::Object(result_dict);
 
-        let html_data = match handlebars.render("gallery", &result_obj).ok() {
-            Some(x) => x,
-            None => return error_response(request, "Failed to encode response"),
-        };
+        let json_data = result_obj.to_string();
 
-        let mut response = Response::from_string(html_data);
-        response.add_header(Header {
+        //let html_data = match handlebars.render("gallery", &result_obj).ok() {
+        //    Some(x) => x,
+        //    None => return error_response(request, "Failed to encode response")
+        //};
+
+        let mut response = Response::from_string(json_data);
+        response.add_header(Header{
+            field: "Access-Control-Allow-Origin".parse::<HeaderField>().unwrap(),
+            value: "*".parse().unwrap()
+        });
+        response.add_header(Header{
             field: "Content-Type".parse::<HeaderField>().unwrap(),
-            value: "text/html".parse().unwrap(),
+            value: "application/json".parse().unwrap()
         });
         return request.respond(response);
     }

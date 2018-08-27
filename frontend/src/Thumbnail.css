@@ -1,0 +1,6 @@
+.thumbnail {
+    display: inline-block;
+}
+.thumbnail img {
+    cursor: pointer;
+}
