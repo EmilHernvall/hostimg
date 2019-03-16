@@ -2,6 +2,7 @@
 name = "hostimg"
 version = "0.1.0"
 authors = ["Emil Hernvall <emil@c0la.se>"]
+edition = "2018"
 
 [dependencies]
 image = "0.12.3"

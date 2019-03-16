@@ -6,7 +6,7 @@ use regex::{Regex,Captures};
 use tiny_http::{Server, Response, StatusCode, Request};
 use handlebars::Handlebars;
 
-use context::ServerContext;
+use crate::context::ServerContext;
 
 fn hex_to_num(c: char) -> u8 {
     match c {
@@ -44,10 +44,13 @@ pub fn url_decode(instr: &str) -> String {
 pub trait Action {
     fn get_regex(&self) -> Regex;
     fn initialize(&self, server: &mut WebServer) -> Result<()>;
-    fn handle(&self,
-              request: Request,
-              path_match: &Captures,
-              handlebars: Arc<Handlebars>) -> Result<()>;
+    fn handle(
+        &self,
+        request: Request,
+        path_match: &Captures,
+        context: ServerContext,
+        handlebars: Arc<Handlebars>,
+    ) -> Result<()>;
 }
 
 struct Template {
@@ -58,16 +61,16 @@ struct Template {
 pub type ThreadsafeAction = Box<Action + Send + Sync>;
 
 pub struct WebServer {
-    pub context: Arc<ServerContext>,
+    pub context: ServerContext,
     actions: Vec<Arc<ThreadsafeAction>>,
-    templates: Vec<Template>
+    templates: Vec<Template>,
 }
 
 impl WebServer {
 
-    pub fn new(context: Arc<ServerContext>) -> Result<WebServer> {
+    pub fn new(context: ServerContext) -> Result<WebServer> {
         let mut server = WebServer {
-            context: context,
+            context,
             templates: Vec::new(),
             actions: Vec::new()
         };
@@ -118,11 +121,9 @@ impl WebServer {
         for _ in 0..self.context.server_threads {
             let webserver = webserver.clone();
             let handlebars = handlebars.clone();
+            let context = self.context.clone();
 
-            let mut actions = Vec::new();
-            for action in &self.actions {
-                actions.push(action.clone());
-            }
+            let actions : Vec<_> = self.actions.iter().cloned().collect();
 
             let guard = thread::spawn(move || {
                 loop {
@@ -136,8 +137,10 @@ impl WebServer {
 
                     println!("HTTP {:?} {:?}", request.method(), request.url());
 
-                    let matching_actions : Vec<&Arc<ThreadsafeAction>> = actions.iter()
+                    let context = context.clone();
+                    let matching_actions : Vec<Arc<ThreadsafeAction>> = actions.iter()
                         .filter(|x| x.get_regex().is_match(&request.url()))
+                        .cloned()
                         .collect();
 
                     if matching_actions.is_empty() {
@@ -146,7 +149,12 @@ impl WebServer {
                     } else {
                         let action = &matching_actions[0];
                         if let Some(caps) = action.get_regex().captures(&request.url().to_string()) {
-                            let _ = action.handle(request, &caps, handlebars.clone());
+                            let _ = action.handle(
+                                request, 
+                                &caps, 
+                                context,
+                                handlebars.clone(),
+                            );
                         }
                     }
                 }

@@ -11,18 +11,15 @@ use chrono::prelude::*;
 use chrono::Duration;
 use handlebars::Handlebars;
 
-use context::ServerContext;
-use web::{WebServer,Action,url_decode,error_response};
+use crate::context::ServerContext;
+use crate::web::{WebServer,Action,url_decode,error_response};
 
 pub struct GalleryAction {
-    context: Arc<ServerContext>
 }
 
 impl GalleryAction {
-    pub fn new(context: Arc<ServerContext>) -> GalleryAction {
-        GalleryAction {
-            context: context
-        }
+    pub fn new() -> GalleryAction {
+        GalleryAction {}
     }
 }
 
@@ -41,9 +38,10 @@ impl Action for GalleryAction {
     fn handle(&self,
               request: Request,
               caps: &Captures,
+              context: ServerContext,
               handlebars: Arc<Handlebars>) -> Result<()> {
 
-        let root_gallery = match self.context.get_root_gallery() {
+        let root_gallery = match context.get_root_gallery() {
             Ok(ref x) => x.clone(),
             Err(_) => return error_response(request, "No root gallery found")
         };
@@ -101,13 +99,11 @@ impl Action for GalleryAction {
 }
 
 pub struct ImageAction {
-    context: Arc<ServerContext>
 }
 
 impl ImageAction {
-    pub fn new(context: Arc<ServerContext>) -> ImageAction {
+    pub fn new() -> ImageAction {
         ImageAction {
-            context: context
         }
     }
 }
@@ -124,6 +120,7 @@ impl Action for ImageAction {
     fn handle(&self,
               request: Request,
               caps: &Captures,
+              context: ServerContext,
               _: Arc<Handlebars>) -> Result<()> {
 
         let hash = match caps.get(1).map(|x| x.as_str()).map(|x| x.to_string()) {
@@ -136,8 +133,8 @@ impl Action for ImageAction {
             .unwrap_or("thumb");
 
         let mut path = match img_size {
-            "thumb" => self.context.thumb_dir.clone(),
-            "preview" => self.context.preview_dir.clone(),
+            "thumb" => context.thumb_dir.clone(),
+            "preview" => context.preview_dir.clone(),
             _ => return error_response(request, "Unknown image size requested")
         };
         path.push(hash + ".jpg");

@@ -1,7 +1,6 @@
 extern crate sha2;
 extern crate image;
 
-use std::ascii::AsciiExt;
 use std::cmp::{PartialOrd,Ordering};
 use std::fs::{read_dir, File};
 use std::io::Error as IoError;
@@ -17,8 +16,8 @@ use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent};
 use image::{GenericImage, DynamicImage, ImageResult};
 use sha2::Digest;
 
-use db::ImageInfo;
-use context::ServerContext;
+use crate::db::ImageInfo;
+use crate::context::ServerContext;
 
 pub fn open_image(file: &Path) -> ImageResult<DynamicImage> {
     let file_obj = File::open(&file)?;
@@ -56,13 +55,13 @@ pub fn is_image(file: &Path) -> bool {
 }
 
 pub struct GalleryScanner {
-    context: Arc<ServerContext>
+    context: ServerContext,
 }
 
 impl GalleryScanner {
-    pub fn new(context: Arc<ServerContext>) -> GalleryScanner {
+    pub fn new(context: ServerContext) -> GalleryScanner {
         GalleryScanner {
-            context: context
+            context,
         }
     }
 
@@ -122,10 +121,9 @@ impl GalleryScanner {
             None => return build_io_error("Failed to retrieve filename")
         };
 
-        let query_result = match self.context.datastore.read() {
-            Ok(datastore) => datastore.find_image_by_name(file_name.to_string())?,
-            Err(_) => return build_io_error("Failed to acquire read lock for database")
-        };
+        let query_result = self.context.datastore.find_image_by_name(
+            file_name.to_string()
+        )?;
 
         if let Some(info) = query_result {
             println!("Found {}", &info.name);
@@ -148,10 +146,7 @@ impl GalleryScanner {
                 None => return build_io_error(format!("Well, this is rather inexplicable. Image: {}", file_name).as_str())
             };
 
-            match self.context.datastore.write() {
-                Ok(mut datastore) => datastore.save_image(&info)?,
-                Err(_) => return build_io_error("Failed to acquire read lock for database")
-            };
+            self.context.datastore.save_image(info.clone())?;
 
             return Ok(info);
         }

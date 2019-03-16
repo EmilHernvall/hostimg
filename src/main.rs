@@ -13,10 +13,9 @@ use std::sync::{Arc,RwLock};
 use std::env;
 use std::fs::{create_dir};
 use std::path::{PathBuf};
-use std::cell::RefCell;
 
-use db::DataStore;
-use file::GalleryScanner;
+use crate::db::DataStore;
+use crate::file::GalleryScanner;
 
 mod db;
 mod file;
@@ -72,7 +71,7 @@ fn main() {
         }
     };
 
-    let context = Arc::new(context::ServerContext {
+    let context = context::ServerContext {
         port: 1080,
         server_threads: 4,
 
@@ -80,10 +79,10 @@ fn main() {
         thumb_dir: thumb_dir,
         preview_dir: preview_dir,
 
-        root_gallery: RefCell::new(None),
+        root_gallery: Arc::new(RwLock::new(None)),
 
-        datastore: RwLock::new(store)
-    });
+        datastore: store,
+    };
 
     let mut scanner = GalleryScanner::new(context.clone());
     if let Err(e) = scanner.scan() {
@@ -95,10 +94,10 @@ fn main() {
 
     match web::WebServer::new(context.clone()) {
         Ok(mut server) => {
-            if let Err(e) = server.register_action(Box::new(gallery::GalleryAction::new(context.clone()))) {
+            if let Err(e) = server.register_action(Box::new(gallery::GalleryAction::new())) {
                 println!("Failed to register GalleryAction: {:?}", e);
             }
-            if let Err(e) = server.register_action(Box::new(gallery::ImageAction::new(context.clone()))) {
+            if let Err(e) = server.register_action(Box::new(gallery::ImageAction::new())) {
                 println!("Failed to register ImageAction: {:?}", e);
             }
 
