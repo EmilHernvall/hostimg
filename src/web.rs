@@ -2,7 +2,6 @@ use std::io::{Error, ErrorKind, Result};
 use std::sync::Arc;
 use std::thread;
 
-use handlebars::Handlebars;
 use regex::{Captures, Regex};
 use tiny_http::{Request, Response, Server, StatusCode};
 
@@ -43,19 +42,12 @@ pub fn url_decode(instr: &str) -> String {
 
 pub trait Action {
     fn get_regex(&self) -> Regex;
-    fn initialize(&self, server: &mut WebServer) -> Result<()>;
     fn handle(
         &self,
         request: Request,
         path_match: &Captures,
         context: ServerContext,
-        handlebars: Arc<Handlebars>,
     ) -> Result<()>;
-}
-
-struct Template {
-    name: String,
-    content: String,
 }
 
 pub type ThreadsafeAction = Box<Action + Send + Sync>;
@@ -63,48 +55,25 @@ pub type ThreadsafeAction = Box<Action + Send + Sync>;
 pub struct WebServer {
     pub context: ServerContext,
     actions: Vec<Arc<ThreadsafeAction>>,
-    templates: Vec<Template>,
 }
 
 impl WebServer {
     pub fn new(context: ServerContext) -> Result<WebServer> {
-        let mut server = WebServer {
+        let server = WebServer {
             context,
-            templates: Vec::new(),
             actions: Vec::new(),
         };
-
-        let tpl_data = include_str!("templates/layout.html").to_string();
-        server.register_template("layout", tpl_data);
 
         Ok(server)
     }
 
-    pub fn register_template(&mut self, name: &str, tpl_data: String) {
-        self.templates.push(Template {
-            name: name.to_string(),
-            content: tpl_data,
-        });
-    }
-
     pub fn register_action(&mut self, action: ThreadsafeAction) -> Result<()> {
-        action.initialize(self)?;
         self.actions.push(Arc::new(action));
 
         Ok(())
     }
 
     pub fn run_webserver(self, join: bool) {
-        let mut handlebars = Handlebars::new();
-        for template in self.templates {
-            if let Err(e) =
-                handlebars.register_template_string(template.name.as_str(), template.content)
-            {
-                println!("Failed to register template {}: {:?}", template.name, e);
-            }
-        }
-
-        let handlebars = Arc::new(handlebars);
 
         let webserver = match Server::http(("0.0.0.0", self.context.port)) {
             Ok(x) => x,
@@ -119,7 +88,6 @@ impl WebServer {
         let mut guards = Vec::with_capacity(self.context.server_threads);
         for _ in 0..self.context.server_threads {
             let webserver = webserver.clone();
-            let handlebars = handlebars.clone();
             let context = self.context.clone();
 
             let actions: Vec<_> = self.actions.iter().cloned().collect();
@@ -148,7 +116,7 @@ impl WebServer {
                 } else {
                     let action = &matching_actions[0];
                     if let Some(caps) = action.get_regex().captures(&request.url().to_string()) {
-                        let _ = action.handle(request, &caps, context, handlebars.clone());
+                        let _ = action.handle(request, &caps, context);
                     }
                 }
             });

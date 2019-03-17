@@ -1,18 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Result;
-use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use chrono::prelude::*;
 use chrono::Duration;
-use handlebars::Handlebars;
 use regex::{Captures, Regex};
 use rustc_serialize::json::{Json, ToJson};
 use tiny_http::{Header, HeaderField, Request, Response};
 
 use crate::context::ServerContext;
-use crate::web::{error_response, url_decode, Action, WebServer};
+use crate::web::{error_response, url_decode, Action};
 
 pub struct GalleryAction {}
 
@@ -27,19 +25,11 @@ impl Action for GalleryAction {
         Regex::new(r"^/gallery$|^/gallery/(.*)$").unwrap()
     }
 
-    fn initialize(&self, server: &mut WebServer) -> Result<()> {
-        let tpl_data = include_str!("templates/gallery.html").to_string();
-        server.register_template("gallery", tpl_data);
-
-        Ok(())
-    }
-
     fn handle(
         &self,
         request: Request,
         caps: &Captures,
         context: ServerContext,
-        handlebars: Arc<Handlebars>,
     ) -> Result<()> {
         let root_gallery = match context.get_root_gallery() {
             Ok(ref x) => x.clone(),
@@ -87,11 +77,6 @@ impl Action for GalleryAction {
 
         let json_data = result_obj.to_string();
 
-        //let html_data = match handlebars.render("gallery", &result_obj).ok() {
-        //    Some(x) => x,
-        //    None => return error_response(request, "Failed to encode response")
-        //};
-
         let mut response = Response::from_string(json_data);
         response.add_header(Header{
             field: "Access-Control-Allow-Origin".parse::<HeaderField>().unwrap(),
@@ -118,16 +103,11 @@ impl Action for ImageAction {
         Regex::new(r"^/image/(.+)/(.+)$").unwrap()
     }
 
-    fn initialize(&self, _: &mut WebServer) -> Result<()> {
-        Ok(())
-    }
-
     fn handle(
         &self,
         request: Request,
         caps: &Captures,
         context: ServerContext,
-        _: Arc<Handlebars>,
     ) -> Result<()> {
         let hash = match caps.get(1).map(|x| x.as_str()).map(|x| x.to_string()) {
             Some(x) => x,
