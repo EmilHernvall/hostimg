@@ -16,5 +16,15 @@ Todo:
    resolution.
  * Support selecting many images and downloading as a zip bundle.
  * Login support
- * Meta data: caption, tags, etc.
+ * Meta data
+    * Caption
+    * Description
+    * Tags
+    * People
+    * Location
+    * Comments
+    * Rating
+    * EXIF
+ * Gallery filters using tags, people and rating
  * Finger print-based duplicate detection
+ * Autotag people using face detection
