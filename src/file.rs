@@ -4,20 +4,19 @@ extern crate sha2;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::BTreeSet;
 use std::fs::{read_dir, File};
-use std::io::Error as IoError;
-use std::io::Result as IoResult;
-use std::io::{BufReader, ErrorKind, Read};
+use std::io::{self, BufReader, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use image::{DynamicImage, GenericImage, ImageResult};
 use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 use sha2::Digest;
 
-use crate::context::ServerContext;
-use crate::db::ImageInfo;
+use crate::context::{ContextError, ServerContext};
+use crate::db::{DataStoreError, ImageInfo};
 
 pub fn open_image(file: &Path) -> ImageResult<DynamicImage> {
     let file_obj = File::open(&file)?;
@@ -25,7 +24,7 @@ pub fn open_image(file: &Path) -> ImageResult<DynamicImage> {
     image::load(reader, image::ImageFormat::JPEG)
 }
 
-pub fn hash_file(file: &Path) -> IoResult<String> {
+pub fn hash_file(file: &Path) -> io::Result<String> {
     let mut file_obj = File::open(file)?;
 
     let mut buffer = [0; 4096];
@@ -54,34 +53,118 @@ pub fn is_image(file: &Path) -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug)]
+pub enum ScannerError {
+    Charset,
+    Io(io::Error),
+    Context(ContextError),
+    DataStore(DataStoreError),
+    Fs,
+}
+
+impl From<io::Error> for ScannerError {
+    fn from(other: io::Error) -> Self {
+        ScannerError::Io(other)
+    }
+}
+
+impl From<ContextError> for ScannerError {
+    fn from(other: ContextError) -> Self {
+        ScannerError::Context(other)
+    }
+}
+
+impl From<DataStoreError> for ScannerError {
+    fn from(other: DataStoreError) -> Self {
+        ScannerError::DataStore(other)
+    }
+}
+
 pub struct GalleryScanner {
     context: ServerContext,
+    indexing_queue: Sender<PathBuf>,
+    indexing_receiver: Option<Receiver<PathBuf>>,
+}
+
+fn process_image(context: &ServerContext, file: &Path) -> Result<Arc<ImageInfo>, ScannerError> {
+    let file_name = file.to_str().ok_or(ScannerError::Charset)?;
+    println!("Adding {}", file_name);
+
+    let image_file = ImageFile::build_from_path(file.to_path_buf())?;
+
+    image_file.scale_and_save(2048, 2048, &context.preview_dir)?;
+    image_file.scale_and_save(256, 256, &context.thumb_dir)?;
+
+    let info = image_file.build_info()?;
+
+    context.datastore.save_image(info.clone())?;
+
+    let parent = file
+        .parent()
+        .ok_or(ScannerError::Fs)?
+        .strip_prefix(&context.gallery_dir)
+        .map_err(|_| ScannerError::Fs)?
+        .to_path_buf();
+
+    let info = Arc::new(info);
+    let op = GalleryModification::Add(info.clone());
+
+    let root_gallery = context.get_root_gallery()?;
+    let new_root = root_gallery.modify(&parent, op)?;
+
+    context.set_root_gallery(new_root)?;
+
+    Ok(info)
 }
 
 impl GalleryScanner {
     pub fn new(context: ServerContext) -> GalleryScanner {
-        GalleryScanner { context }
+        let (indexing_queue, indexing_receiver) = channel();
+
+        GalleryScanner {
+            context,
+            indexing_queue,
+            indexing_receiver: Some(indexing_receiver),
+        }
     }
 
-    pub fn scan(&mut self) -> IoResult<()> {
+    pub fn process_images(&mut self) {
+        let context = self.context.clone();
+
+        let mut indexing_receiver = None;
+        std::mem::swap(&mut self.indexing_receiver, &mut indexing_receiver);
+
+        thread::spawn(move || {
+            let indexing_receiver =
+                indexing_receiver.expect("Failed to start indexing thread: Incoming queue missing");
+            for file in indexing_receiver {
+                match process_image(&context, &file) {
+                    Ok(info) => println!("Completed processing: {:?}", info.name),
+                    Err(e) => eprintln!("Failed to process {:?}: {:?}", file, e),
+                }
+            }
+        });
+    }
+
+    pub fn scan(&mut self) -> Result<(), io::Error> {
         let gallery_dir = &self.context.gallery_dir.clone();
 
         let gallery = Arc::new(self.scan_recursive(gallery_dir, &is_image)?);
 
         self.context
             .set_root_gallery(gallery)
-            .or(build_io_error("Failed to set root gallery"))?;
+            .or(build_io_result("Failed to set root gallery"))?;
 
         Ok(())
     }
 
-    fn scan_recursive<F>(&mut self, dir: &PathBuf, accept: &F) -> IoResult<ImageGallery>
+    fn scan_recursive<F>(&mut self, dir: &PathBuf, accept: &F) -> Result<ImageGallery, io::Error>
     where
         F: Fn(&Path) -> bool,
     {
         let local_path = dir
             .strip_prefix(&self.context.gallery_dir)
-            .or(build_io_error("Failed to strip directory prefix"))?
+            .or(build_io_result("Failed to strip directory prefix"))?
             .to_path_buf();
 
         let mut new_gallery = ImageGallery::new(local_path);
@@ -100,76 +183,87 @@ impl GalleryScanner {
                     Err(e) => println!("Failed to add gallery {:?}", e),
                 }
             } else if filetype.is_file() && accept(&p) {
-                match self.add_file(&p) {
-                    Ok(info) => {
+                match self.find_file(&p) {
+                    Ok(Some(info)) => {
                         new_gallery.imagecount += 1;
                         new_gallery.images.insert(Arc::new(info));
+                    }
+                    Ok(None) => {
+                        println!("Deferring indexing of {:?}", p);
+                        self.indexing_queue
+                            .send(p.clone())
+                            .or(build_io_result("Failed to send file to indexing thread"))?;
                     }
                     Err(e) => println!("Failed to add image {:?}", e),
                 }
             }
         }
 
+        println!(
+            "Finished scanning directory {:?} with {} images",
+            dir, new_gallery.imagecount
+        );
+
         Ok(new_gallery)
     }
 
-    fn add_file(&mut self, file: &PathBuf) -> IoResult<ImageInfo> {
-        let file_name = match file.to_str() {
-            Some(x) => x,
-            None => return build_io_error("Failed to retrieve filename"),
-        };
+    fn find_file(&mut self, file: &PathBuf) -> Result<Option<ImageInfo>, ScannerError> {
+        let file_name = file.to_str().ok_or(ScannerError::Charset)?;
 
         let query_result = self
             .context
             .datastore
             .find_image_by_name(file_name.to_string())?;
 
-        if let Some(info) = query_result {
-            println!("Found {}", &info.name);
-
-            Ok(info)
-        } else {
-            println!("Adding {}", file_name);
-            let image_file = ImageFile::build_from_path(file)?;
-
-            if let Err(e) = image_file.scale_and_save(2048, 2048, &self.context.preview_dir) {
-                println!("Failed to save preview for image {}: {:?}", file_name, e);
-            }
-
-            if let Err(e) = image_file.scale_and_save(256, 256, &self.context.thumb_dir) {
-                println!("Failed to save thumb for image {}: {:?}", file_name, e);
-            }
-
-            let info = match image_file.build_info() {
-                Some(info) => info,
-                None => {
-                    return build_io_error(
-                        format!("Well, this is rather inexplicable. Image: {}", file_name).as_str(),
-                    );
-                }
-            };
-
-            self.context.datastore.save_image(info.clone())?;
-
-            return Ok(info);
-        }
+        Ok(query_result)
     }
 
-    fn handle_update(&mut self, event: DebouncedEvent) -> IoResult<()> {
+    fn handle_update(&mut self, event: DebouncedEvent) -> Result<(), io::Error> {
         let root_gallery = self
             .context
             .get_root_gallery()
-            .or(build_io_error("Failed to get root gallery"))?;
+            .or(build_io_result("Failed to get root gallery"))?;
 
         match event {
-            DebouncedEvent::Create(ref path) | DebouncedEvent::Remove(ref path) => {
+            DebouncedEvent::Create(ref path) => {
+                if !is_image(path) {
+                    return Ok(());
+                }
+
+                if let Some(info) = self
+                    .find_file(path)
+                    .or(build_io_result("Failed to add file"))?
+                {
+                    let parent = match path
+                        .parent()
+                        .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
+                    {
+                        Some(x) => x.to_path_buf(),
+                        None => return build_io_result("Path has no parent"),
+                    };
+
+                    println!("Found new image: {:?}", path);
+                    let op = GalleryModification::Add(Arc::new(info));
+
+                    let new_root = root_gallery.modify(&parent, op)?;
+                    self.context
+                        .set_root_gallery(new_root)
+                        .or(build_io_result("Failed to set root gallery"))?;
+                } else {
+                    self.indexing_queue
+                        .send(path.clone())
+                        .or(build_io_result("Failed to send file to indexing thread"))?;
+                }
+            }
+            DebouncedEvent::Remove(ref path) => {
                 if !is_image(path) {
                     return Ok(());
                 }
 
                 let info = Arc::new(
-                    self.add_file(path)
-                        .or(build_io_error("Failed to add file"))?,
+                    self.find_file(path)
+                        .or(build_io_result("Failed to add file"))?
+                        .ok_or(build_io_error("File not found"))?,
                 );
 
                 let parent = match path
@@ -177,25 +271,16 @@ impl GalleryScanner {
                     .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
                 {
                     Some(x) => x.to_path_buf(),
-                    None => return build_io_error("Path has no parent"),
+                    None => return build_io_result("Path has no parent"),
                 };
 
-                let op = match event {
-                    DebouncedEvent::Create(_) => {
-                        println!("Found new image: {:?}", path);
-                        GalleryModification::Add(info)
-                    }
-                    DebouncedEvent::Remove(_) => {
-                        println!("Detected removed image: {:?}", path);
-                        GalleryModification::Remove(info)
-                    }
-                    _ => unreachable!(),
-                };
+                println!("Detected removed image: {:?}", path);
+                let op = GalleryModification::Remove(info);
 
                 let new_root = root_gallery.modify(&parent, op)?;
                 self.context
                     .set_root_gallery(new_root)
-                    .or(build_io_error("Failed to set root gallery"))?;
+                    .or(build_io_result("Failed to set root gallery"))?;
             }
             DebouncedEvent::Rename(ref from_path, ref to_path) => {
                 if !is_image(from_path) {
@@ -205,35 +290,27 @@ impl GalleryScanner {
                 println!("Detected rename: {:?} - {:?}", from_path, to_path);
 
                 let from_info = Arc::new(
-                    self.add_file(from_path)
-                        .or(build_io_error("Failed to add file"))?,
+                    self.find_file(from_path)
+                        .or(build_io_result("Failed to add file"))?
+                        .ok_or(build_io_error("File not found"))?,
                 );
                 let from_parent = match from_path
                     .parent()
                     .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
                 {
                     Some(x) => x.to_path_buf(),
-                    None => return build_io_error("Path has no parent"),
+                    None => return build_io_result("Path has no parent"),
                 };
 
-                let to_info = Arc::new(
-                    self.add_file(to_path)
-                        .or(build_io_error("Failed to add file"))?,
-                );
-                let to_parent = match to_path
-                    .parent()
-                    .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
-                {
-                    Some(x) => x.to_path_buf(),
-                    None => return build_io_error("Path has no parent"),
-                };
+                self.indexing_queue
+                    .send(to_path.clone())
+                    .or(build_io_result("Failed to send file to indexing thread"))?;
 
-                let new_root = root_gallery
-                    .modify(&from_parent, GalleryModification::Remove(from_info))?
-                    .modify(&to_parent, GalleryModification::Add(to_info))?;
+                let new_root =
+                    root_gallery.modify(&from_parent, GalleryModification::Remove(from_info))?;
                 self.context
                     .set_root_gallery(new_root)
-                    .or(build_io_error("Failed to set root gallery"))?;
+                    .or(build_io_result("Failed to set root gallery"))?;
             }
             DebouncedEvent::Write(_) => {}
             DebouncedEvent::Rescan => {}
@@ -243,19 +320,19 @@ impl GalleryScanner {
         Ok(())
     }
 
-    pub fn monitor(mut self) -> IoResult<()> {
+    pub fn monitor(mut self) -> Result<(), io::Error> {
         let (tx, rx) = channel();
 
         let mut watcher =
-            watcher(tx, Duration::from_secs(10)).or(build_io_error("Failed to create watcher"))?;
+            watcher(tx, Duration::from_secs(10)).or(build_io_result("Failed to create watcher"))?;
         watcher
             .watch(&self.context.gallery_dir, RecursiveMode::Recursive)
-            .or(build_io_error("Failed to register watch"))?;
+            .or(build_io_result("Failed to register watch"))?;
 
         loop {
             match rx
                 .recv()
-                .or(build_io_error("Failed to read event"))
+                .or(build_io_result("Failed to read event"))
                 .and_then(|event| self.handle_update(event))
             {
                 Ok(_) => {}
@@ -265,8 +342,12 @@ impl GalleryScanner {
     }
 }
 
-fn build_io_error<T>(message: &str) -> IoResult<T> {
-    Err(IoError::new(ErrorKind::Other, message))
+fn build_io_error(message: &str) -> io::Error {
+    io::Error::new(ErrorKind::Other, message)
+}
+
+fn build_io_result<T>(message: &str) -> Result<T, io::Error> {
+    Err(io::Error::new(ErrorKind::Other, message))
 }
 
 pub struct ImageGallery {
@@ -359,7 +440,7 @@ impl ImageGallery {
         &self,
         dir_path: &PathBuf,
         op: GalleryModification,
-    ) -> IoResult<Arc<ImageGallery>> {
+    ) -> Result<Arc<ImageGallery>, io::Error> {
         let mut new_self = ImageGallery::new(self.path.clone());
         let mut found_gallery = false;
         for subgallery in &self.sub_galleries {
@@ -402,7 +483,7 @@ impl ImageGallery {
                     new_self.sub_galleries.insert(new_subgallery);
                 }
                 None => {
-                    return build_io_error(
+                    return build_io_result(
                         "Failed to find next path step when rebuilding gallery structure",
                     );
                 }
@@ -435,18 +516,23 @@ pub struct ImageFile {
 }
 
 impl ImageFile {
-    pub fn build_from_path(file: &PathBuf) -> IoResult<ImageFile> {
-        let img = open_image(file).or(build_io_error("Failed to open image"))?;
-        let hash = hash_file(file)?;
+    pub fn build_from_path(path: PathBuf) -> Result<ImageFile, io::Error> {
+        let img = open_image(&path).or(build_io_result("Failed to open image"))?;
+        let hash = hash_file(&path)?;
 
         Ok(ImageFile {
-            path: file.clone(),
+            path,
             image: img,
             hash: hash,
         })
     }
 
-    pub fn scale_and_save(&self, max_width: u32, max_height: u32, dir: &PathBuf) -> IoResult<()> {
+    pub fn scale_and_save(
+        &self,
+        max_width: u32,
+        max_height: u32,
+        dir: &PathBuf,
+    ) -> Result<(), io::Error> {
         let mut name = dir.clone();
         name.push(self.hash.clone() + ".jpg");
 
@@ -460,21 +546,18 @@ impl ImageFile {
         File::create(&name).and_then(|mut file| {
             preview
                 .save(&mut file, image::ImageFormat::JPEG)
-                .or(Err(IoError::new(
+                .or(Err(io::Error::new(
                     ErrorKind::Other,
                     "Failed to write image data",
                 )))
         })
     }
 
-    pub fn build_info(&self) -> Option<ImageInfo> {
-        let file_name = match self.path.to_str() {
-            Some(x) => x,
-            None => return None,
-        };
+    pub fn build_info(&self) -> Result<ImageInfo, ScannerError> {
+        let file_name = self.path.to_str().ok_or(ScannerError::Charset)?;
 
         let (width, height) = self.image.dimensions();
-        Some(ImageInfo {
+        Ok(ImageInfo {
             id: 0,
             name: file_name.to_string(),
             hash: self.hash.clone(),

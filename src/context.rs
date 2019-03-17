@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 use crate::db::DataStore;
 use crate::file::ImageGallery;
 
+#[derive(Debug)]
 pub enum ContextError {
     GalleryAccessError,
     GalleryNotSetError,

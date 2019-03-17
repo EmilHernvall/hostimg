@@ -85,11 +85,13 @@ fn main() {
     };
 
     let mut scanner = GalleryScanner::new(context.clone());
+
     if let Err(e) = scanner.scan() {
         println!("Scanning of file system failed: {:?}", e);
         return;
     }
 
+    scanner.process_images();
     println!("Running");
 
     match web::WebServer::new(context.clone()) {
