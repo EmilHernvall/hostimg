@@ -66,20 +66,8 @@ impl DataStore {
         let conn = Connection::open(db_file).map_err(|e| DataStoreError::Connection(e))?;
 
         if setup_db {
-            conn.execute(
-                "CREATE TABLE image (
-                image_id INTEGER PRIMARY KEY,
-                image_name TEXT NOT NULL,
-                image_hash TEXT NOT NULL,
-                image_width INTEGER NOT NULL,
-                image_height INTEGER NOT NULL,
-                image_type TEXT NOT NULL
-            )",
-                &[],
-            )
-            .map_err(|e| DataStoreError::Setup(e))?;
-
-            // TODO: create index on name
+            conn.execute_batch(include_str!("schema.sql"))
+                .map_err(|e| DataStoreError::Setup(e))?;
         }
 
         let (channel, receiver) = mpsc::channel::<DbClosure>();
