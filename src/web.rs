@@ -1,4 +1,5 @@
-use std::io::{Error, ErrorKind, Result};
+use std::error::Error;
+use std::result::Result;
 use std::sync::Arc;
 use std::thread;
 
@@ -40,6 +41,14 @@ pub fn url_decode(instr: &str) -> String {
     buffer
 }
 
+#[derive(Debug)]
+pub enum WebError {
+    MissingParam,
+    InvalidParam,
+    NotFound,
+    Other(Box<dyn Error + Send + Sync + 'static>),
+}
+
 pub trait Action {
     fn get_regex(&self) -> Regex;
     fn handle(
@@ -47,7 +56,7 @@ pub trait Action {
         request: Request,
         path_match: &Captures,
         context: ServerContext,
-    ) -> Result<()>;
+    ) -> Result<(), WebError>;
 }
 
 pub type ThreadsafeAction = Box<Action + Send + Sync>;
@@ -58,19 +67,15 @@ pub struct WebServer {
 }
 
 impl WebServer {
-    pub fn new(context: ServerContext) -> Result<WebServer> {
-        let server = WebServer {
+    pub fn new(context: ServerContext) -> WebServer {
+        WebServer {
             context,
             actions: Vec::new(),
-        };
-
-        Ok(server)
+        }
     }
 
-    pub fn register_action(&mut self, action: ThreadsafeAction) -> Result<()> {
+    pub fn register_action(&mut self, action: ThreadsafeAction) {
         self.actions.push(Arc::new(action));
-
-        Ok(())
     }
 
     pub fn run_webserver(self, join: bool) {
@@ -116,7 +121,9 @@ impl WebServer {
                 } else {
                     let action = &matching_actions[0];
                     if let Some(caps) = action.get_regex().captures(&request.url().to_string()) {
-                        let _ = action.handle(request, &caps, context);
+                        if let Err(e) = action.handle(request, &caps, context) {
+                            eprintln!("Request failed: {:?}", e);
+                        }
                     }
                 }
             });
@@ -130,10 +137,4 @@ impl WebServer {
             }
         }
     }
-}
-
-pub fn error_response(request: Request, error: &str) -> Result<()> {
-    let response = Response::empty(StatusCode(400));
-    let _ = request.respond(response);
-    Err(Error::new(ErrorKind::InvalidInput, error))
 }

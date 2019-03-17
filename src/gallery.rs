@@ -1,16 +1,15 @@
-use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::Result;
+use std::result::Result;
 use std::time::UNIX_EPOCH;
 
 use chrono::prelude::*;
 use chrono::Duration;
 use regex::{Captures, Regex};
-use rustc_serialize::json::{Json, ToJson};
 use tiny_http::{Header, HeaderField, Request, Response};
+use serde_json::json;
 
 use crate::context::ServerContext;
-use crate::web::{error_response, url_decode, Action};
+use crate::web::{WebError, url_decode, Action};
 
 pub struct GalleryAction {}
 
@@ -30,10 +29,10 @@ impl Action for GalleryAction {
         request: Request,
         caps: &Captures,
         context: ServerContext,
-    ) -> Result<()> {
+    ) -> Result<(), WebError> {
         let root_gallery = match context.get_root_gallery() {
             Ok(ref x) => x.clone(),
-            Err(_) => return error_response(request, "No root gallery found"),
+            Err(_) => return Err(WebError::NotFound),
         };
 
         let gallery = caps
@@ -45,37 +44,31 @@ impl Action for GalleryAction {
 
         let mut sub_galleries = Vec::new();
         for sub_gallery in &gallery.sub_galleries {
-            let mut gallery_dict = BTreeMap::new();
-            gallery_dict.insert("path".to_string(), sub_gallery.get_path().to_json());
-            gallery_dict.insert("name".to_string(), sub_gallery.get_name().to_json());
-            sub_galleries.push(Json::Object(gallery_dict));
+            sub_galleries.push(json!({
+                "path": sub_gallery.get_path(),
+                "name": sub_gallery.get_name(),
+            }));
         }
-
-        let sub_galleries = Json::Array(sub_galleries);
 
         let mut images = Vec::new();
         for image in &gallery.images {
-            let mut image_dict = BTreeMap::new();
-            image_dict.insert("name".to_string(), image.name.to_json());
-            image_dict.insert("hash".to_string(), image.hash.to_json());
-            image_dict.insert("width".to_string(), image.width.to_json());
-            image_dict.insert("height".to_string(), image.height.to_json());
-            images.push(Json::Object(image_dict));
+            images.push(json!({
+                "name": image.name,
+                "hash": image.hash,
+                "width": image.width,
+                "height": image.height,
+            }));
         }
 
-        let images = Json::Array(images);
+        let result_obj = json!({
+            "name": gallery.get_name(),
+            "sub_galleries": sub_galleries,
+            "images": images,
+            "parent": gallery.get_parent(),
+        });
 
-        let mut result_dict = BTreeMap::new();
-        result_dict.insert("name".to_string(), gallery.get_name().to_json());
-        if let Some(parent) = gallery.get_parent() {
-            result_dict.insert("has_parent".to_string(), true.to_json());
-            result_dict.insert("parent".to_string(), parent.to_json());
-        }
-        result_dict.insert("sub_galleries".to_string(), sub_galleries);
-        result_dict.insert("images".to_string(), images);
-        let result_obj = Json::Object(result_dict);
-
-        let json_data = result_obj.to_string();
+        let json_data = serde_json::to_string(&result_obj)
+            .map_err(|e| WebError::Other(Box::new(e)))?;
 
         let mut response = Response::from_string(json_data);
         response.add_header(Header{
@@ -86,7 +79,8 @@ impl Action for GalleryAction {
             field: "Content-Type".parse::<HeaderField>().unwrap(),
             value: "application/json".parse().unwrap()
         });
-        return request.respond(response);
+        return request.respond(response)
+            .map_err(|e| WebError::Other(Box::new(e)));
     }
 }
 
@@ -108,10 +102,10 @@ impl Action for ImageAction {
         request: Request,
         caps: &Captures,
         context: ServerContext,
-    ) -> Result<()> {
-        let hash = match caps.get(1).map(|x| x.as_str()).map(|x| x.to_string()) {
-            Some(x) => x,
-            None => return error_response(request, "No hash specified"),
+    ) -> Result<(), WebError> {
+        let hash = match caps.get(1).map(|x| x.as_str()) {
+            Some(x) => x.to_string(),
+            None => return Err(WebError::MissingParam),
         };
 
         let img_size = caps.get(2).map(|x| x.as_str()).unwrap_or("thumb");
@@ -119,11 +113,12 @@ impl Action for ImageAction {
         let mut path = match img_size {
             "thumb" => context.thumb_dir.clone(),
             "preview" => context.preview_dir.clone(),
-            _ => return error_response(request, "Unknown image size requested"),
+            _ => return Err(WebError::InvalidParam),
         };
         path.push(hash + ".jpg");
 
-        let file = File::open(&path)?;
+        let file = File::open(&path)
+            .map_err(|_e| WebError::NotFound)?;
 
         let mut response = Response::from_file(file);
 
@@ -155,6 +150,7 @@ impl Action for ImageAction {
             value: expires_formatted.parse().unwrap(),
         });
 
-        return request.respond(response);
+        return request.respond(response)
+            .map_err(|e| WebError::Other(Box::new(e)));
     }
 }

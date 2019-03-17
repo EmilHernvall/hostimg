@@ -1,14 +1,3 @@
-extern crate ascii;
-extern crate chrono;
-extern crate handlebars;
-extern crate image;
-extern crate notify;
-extern crate regex;
-extern crate rusqlite;
-extern crate rustc_serialize;
-extern crate sha2;
-extern crate tiny_http;
-
 use std::env;
 use std::fs::create_dir;
 use std::path::PathBuf;
@@ -94,21 +83,11 @@ fn main() {
     scanner.process_images();
     println!("Running");
 
-    match web::WebServer::new(context.clone()) {
-        Ok(mut server) => {
-            if let Err(e) = server.register_action(Box::new(gallery::GalleryAction::new())) {
-                println!("Failed to register GalleryAction: {:?}", e);
-            }
-            if let Err(e) = server.register_action(Box::new(gallery::ImageAction::new())) {
-                println!("Failed to register ImageAction: {:?}", e);
-            }
+    let mut server = web::WebServer::new(context.clone());
+    server.register_action(Box::new(gallery::GalleryAction::new()));
+    server.register_action(Box::new(gallery::ImageAction::new()));
 
-            server.run_webserver(false);
-        }
-        Err(e) => {
-            println!("Server failed to start: {:?}", e);
-        }
-    }
+    server.run_webserver(false);
 
     let _ = scanner.monitor();
 }
