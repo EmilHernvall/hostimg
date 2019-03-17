@@ -28,19 +28,19 @@ class Lightbox extends React.Component<LightboxProps, LightboxState> {
     }
 
     public componentWillMount() {
-        document.addEventListener("keydown", e => this.onKeyDown(e as KeyboardEvent), false);
+        document.addEventListener("keyup", e => this.onKeyUp(e as KeyboardEvent), false);
     }
 
     public componentWillUnmount() {
-        document.removeEventListener("keydown", e => this.onKeyDown(e as KeyboardEvent), false);
+        document.removeEventListener("keyup", e => this.onKeyUp(e as KeyboardEvent), false);
     }
 
-    private onKeyDown(e: KeyboardEvent) {
+    private onKeyUp(e: KeyboardEvent) {
         const { onNextImage, onPreviousImage } = this.props;
         if (e.key == "ArrowRight") {
-                onNextImage();
+            onNextImage();
         } else if (e.key == "ArrowLeft") {
-                onPreviousImage();
+            onPreviousImage();
         }
     }
 
