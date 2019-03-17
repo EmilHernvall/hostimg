@@ -1,12 +1,13 @@
 use std::error::Error;
-use std::result::Result;
 use std::sync::Arc;
 use std::thread;
 
-use regex::{Captures, Regex};
-use tiny_http::{Request, Response, Server, StatusCode};
+use regex::Regex;
+use tiny_http::{Response, Server, StatusCode};
+use lazy_static::lazy_static;
 
 use crate::context::ServerContext;
+use crate::gallery;
 
 fn hex_to_num(c: char) -> u8 {
     match c {
@@ -49,92 +50,72 @@ pub enum WebError {
     Other(Box<dyn Error + Send + Sync + 'static>),
 }
 
-pub trait Action {
-    fn get_regex(&self) -> Regex;
-    fn handle(
-        &self,
-        request: Request,
-        path_match: &Captures,
-        context: ServerContext,
-    ) -> Result<(), WebError>;
-}
+pub fn run_server(context: ServerContext) {
 
-pub type ThreadsafeAction = Box<Action + Send + Sync>;
+    lazy_static!{
+        static ref GALLERY_PATTERN : Regex = Regex::new(r"^/gallery$|^/gallery/(.*)$").unwrap();
+        static ref IMAGE_PATTERN : Regex = Regex::new(r"^/image/(.+)/(.+)$").unwrap();
+    }
 
-pub struct WebServer {
-    pub context: ServerContext,
-    actions: Vec<Arc<ThreadsafeAction>>,
-}
-
-impl WebServer {
-    pub fn new(context: ServerContext) -> WebServer {
-        WebServer {
-            context,
-            actions: Vec::new(),
+    let webserver = match Server::http(("0.0.0.0", context.port)) {
+        Ok(x) => x,
+        Err(e) => {
+            println!("Failed to start web server: {:?}", e);
+            return;
         }
-    }
+    };
 
-    pub fn register_action(&mut self, action: ThreadsafeAction) {
-        self.actions.push(Arc::new(action));
-    }
+    let webserver = Arc::new(webserver);
 
-    pub fn run_webserver(self, join: bool) {
+    for _ in 0..context.server_threads {
+        let webserver = webserver.clone();
+        let context = context.clone();
 
-        let webserver = match Server::http(("0.0.0.0", self.context.port)) {
-            Ok(x) => x,
-            Err(e) => {
-                println!("Failed to start web server: {:?}", e);
-                return;
-            }
-        };
-
-        let webserver = Arc::new(webserver);
-
-        let mut guards = Vec::with_capacity(self.context.server_threads);
-        for _ in 0..self.context.server_threads {
-            let webserver = webserver.clone();
-            let context = self.context.clone();
-
-            let actions: Vec<_> = self.actions.iter().cloned().collect();
-
-            let guard = thread::spawn(move || loop {
-                let request = match webserver.recv() {
-                    Ok(x) => x,
-                    Err(e) => {
-                        println!("Failed to retrieve request: {:?}", e);
-                        continue;
-                    }
-                };
-
-                println!("HTTP {:?} {:?}", request.method(), request.url());
-
-                let context = context.clone();
-                let matching_actions: Vec<Arc<ThreadsafeAction>> = actions
-                    .iter()
-                    .filter(|x| x.get_regex().is_match(&request.url()))
-                    .cloned()
-                    .collect();
-
-                if matching_actions.is_empty() {
-                    let response = Response::empty(StatusCode(404));
-                    let _ = request.respond(response);
-                } else {
-                    let action = &matching_actions[0];
-                    if let Some(caps) = action.get_regex().captures(&request.url().to_string()) {
-                        if let Err(e) = action.handle(request, &caps, context) {
-                            eprintln!("Request failed: {:?}", e);
-                        }
-                    }
+        thread::spawn(move || loop {
+            let request = match webserver.recv() {
+                Ok(x) => x,
+                Err(e) => {
+                    println!("Failed to retrieve request: {:?}", e);
+                    continue;
                 }
-            });
+            };
 
-            guards.push(guard);
-        }
+            let context = context.clone();
 
-        if join {
-            for guard in guards {
-                let _ = guard.join();
+            let url = request.url().to_string();
+            println!("HTTP {:?} {:?}", request.method(), url);
+
+            let result = if let Some(caps) = GALLERY_PATTERN.captures(&url) {
+                let gallery = caps
+                    .get(1)
+                    .map(|x| url_decode(x.as_str()))
+                    .map(|x| x.into());
+
+                gallery::gallery_action(context, gallery)
+            } else if let Some(caps) = IMAGE_PATTERN.captures(&url) {
+                let hash = caps.get(1).map(|x| x.as_str().to_string());
+
+                let img_size = caps.get(2).map(|x| x.as_str()).unwrap_or("thumb");
+
+                gallery::image_action(context, hash, img_size)
+            } else {
+                Ok(Response::empty(StatusCode(404)).boxed())
+            };
+
+            let response_result = match result {
+                Ok(response) => request.respond(response),
+                Err(WebError::MissingParam) => request.respond(Response::empty(StatusCode(400))),
+                Err(WebError::InvalidParam) => request.respond(Response::empty(StatusCode(400))),
+                Err(WebError::NotFound) => request.respond(Response::empty(StatusCode(404))),
+                Err(WebError::Other(e)) => {
+                    eprintln!("Unexpected error servicing request: {:?}", e);
+                    request.respond(Response::empty(StatusCode(500)))
+                },
+            };
+
+            if let Err(e) = response_result {
+                eprintln!("Response failed: {:?}", e);
             }
-        }
+        });
     }
 }

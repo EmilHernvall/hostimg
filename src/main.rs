@@ -83,11 +83,7 @@ fn main() {
     scanner.process_images();
     println!("Running");
 
-    let mut server = web::WebServer::new(context.clone());
-    server.register_action(Box::new(gallery::GalleryAction::new()));
-    server.register_action(Box::new(gallery::ImageAction::new()));
-
-    server.run_webserver(false);
+    web::run_server(context.clone());
 
     let _ = scanner.monitor();
 }

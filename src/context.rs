@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::result::Result;
+use std::error::Error;
 use std::sync::{Arc, RwLock};
+use std::fmt;
 
 use crate::db::DataStore;
 use crate::file::ImageGallery;
@@ -9,6 +11,18 @@ use crate::file::ImageGallery;
 pub enum ContextError {
     GalleryAccessError,
     GalleryNotSetError,
+}
+
+impl Error for ContextError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
+impl fmt::Display for ContextError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Clone)]
