@@ -1,21 +1,20 @@
-use std::io::Result;
-use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::Result;
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use regex::{Regex,Captures};
-use tiny_http::{Response, Header, HeaderField, Request};
-use rustc_serialize::json::{ToJson, Json};
 use chrono::prelude::*;
 use chrono::Duration;
 use handlebars::Handlebars;
+use regex::{Captures, Regex};
+use rustc_serialize::json::{Json, ToJson};
+use tiny_http::{Header, HeaderField, Request, Response};
 
 use crate::context::ServerContext;
-use crate::web::{WebServer,Action,url_decode,error_response};
+use crate::web::{error_response, url_decode, Action, WebServer};
 
-pub struct GalleryAction {
-}
+pub struct GalleryAction {}
 
 impl GalleryAction {
     pub fn new() -> GalleryAction {
@@ -35,18 +34,20 @@ impl Action for GalleryAction {
         Ok(())
     }
 
-    fn handle(&self,
-              request: Request,
-              caps: &Captures,
-              context: ServerContext,
-              handlebars: Arc<Handlebars>) -> Result<()> {
-
+    fn handle(
+        &self,
+        request: Request,
+        caps: &Captures,
+        context: ServerContext,
+        handlebars: Arc<Handlebars>,
+    ) -> Result<()> {
         let root_gallery = match context.get_root_gallery() {
             Ok(ref x) => x.clone(),
-            Err(_) => return error_response(request, "No root gallery found")
+            Err(_) => return error_response(request, "No root gallery found"),
         };
 
-        let gallery = caps.get(1)
+        let gallery = caps
+            .get(1)
             .map(|x| url_decode(x.as_str()))
             .map(|x| x.into())
             .and_then(|x| root_gallery.find_gallery_from_name(&x))
@@ -86,25 +87,23 @@ impl Action for GalleryAction {
 
         let html_data = match handlebars.render("gallery", &result_obj).ok() {
             Some(x) => x,
-            None => return error_response(request, "Failed to encode response")
+            None => return error_response(request, "Failed to encode response"),
         };
 
         let mut response = Response::from_string(html_data);
-        response.add_header(Header{
+        response.add_header(Header {
             field: "Content-Type".parse::<HeaderField>().unwrap(),
-            value: "text/html".parse().unwrap()
+            value: "text/html".parse().unwrap(),
         });
         return request.respond(response);
     }
 }
 
-pub struct ImageAction {
-}
+pub struct ImageAction {}
 
 impl ImageAction {
     pub fn new() -> ImageAction {
-        ImageAction {
-        }
+        ImageAction {}
     }
 }
 
@@ -117,25 +116,24 @@ impl Action for ImageAction {
         Ok(())
     }
 
-    fn handle(&self,
-              request: Request,
-              caps: &Captures,
-              context: ServerContext,
-              _: Arc<Handlebars>) -> Result<()> {
-
+    fn handle(
+        &self,
+        request: Request,
+        caps: &Captures,
+        context: ServerContext,
+        _: Arc<Handlebars>,
+    ) -> Result<()> {
         let hash = match caps.get(1).map(|x| x.as_str()).map(|x| x.to_string()) {
             Some(x) => x,
-            None => return error_response(request, "No hash specified")
+            None => return error_response(request, "No hash specified"),
         };
 
-        let img_size = caps.get(2)
-            .map(|x| x.as_str())
-            .unwrap_or("thumb");
+        let img_size = caps.get(2).map(|x| x.as_str()).unwrap_or("thumb");
 
         let mut path = match img_size {
             "thumb" => context.thumb_dir.clone(),
             "preview" => context.preview_dir.clone(),
-            _ => return error_response(request, "Unknown image size requested")
+            _ => return error_response(request, "Unknown image size requested"),
         };
         path.push(hash + ".jpg");
 
@@ -143,32 +141,32 @@ impl Action for ImageAction {
 
         let mut response = Response::from_file(file);
 
-        response.add_header(Header{
+        response.add_header(Header {
             field: "Cache-Control".parse::<HeaderField>().unwrap(),
-            value: "private, max-age=31536000".parse().unwrap()
+            value: "private, max-age=31536000".parse().unwrap(),
         });
 
-        response.add_header(Header{
+        response.add_header(Header {
             field: "Content-Type".parse::<HeaderField>().unwrap(),
-            value: "image/jpeg".parse().unwrap()
+            value: "image/jpeg".parse().unwrap(),
         });
 
         if let Ok(fixed) = path.metadata().and_then(|x| x.modified()) {
             if let Ok(time) = fixed.duration_since(UNIX_EPOCH) {
                 let modified = NaiveDateTime::from_timestamp(time.as_secs() as i64, 0);
                 let modified_formatted = modified.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-                response.add_header(Header{
+                response.add_header(Header {
                     field: "Last-Modified".parse::<HeaderField>().unwrap(),
-                    value: modified_formatted.parse().unwrap()
+                    value: modified_formatted.parse().unwrap(),
                 });
             }
         }
 
         let expires = UTC::now() + Duration::days(365);
         let expires_formatted = expires.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        response.add_header(Header{
+        response.add_header(Header {
             field: "Expires".parse::<HeaderField>().unwrap(),
-            value: expires_formatted.parse().unwrap()
+            value: expires_formatted.parse().unwrap(),
         });
 
         return request.respond(response);

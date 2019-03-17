@@ -1,27 +1,27 @@
-extern crate image;
-extern crate sha2;
-extern crate rusqlite;
-extern crate tiny_http;
-extern crate regex;
-extern crate handlebars;
-extern crate rustc_serialize;
 extern crate ascii;
 extern crate chrono;
+extern crate handlebars;
+extern crate image;
 extern crate notify;
+extern crate regex;
+extern crate rusqlite;
+extern crate rustc_serialize;
+extern crate sha2;
+extern crate tiny_http;
 
-use std::sync::{Arc,RwLock};
 use std::env;
-use std::fs::{create_dir};
-use std::path::{PathBuf};
+use std::fs::create_dir;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use crate::db::DataStore;
 use crate::file::GalleryScanner;
 
+mod context;
 mod db;
 mod file;
-mod context;
-mod web;
 mod gallery;
+mod web;
 
 fn main() {
     let file_dir = match env::home_dir() {
@@ -32,7 +32,7 @@ fn main() {
             }
 
             dir
-        },
+        }
         None => {
             println!("Couldn't figure out home directory.");
             return;
@@ -102,7 +102,7 @@ fn main() {
             }
 
             server.run_webserver(false);
-        },
+        }
         Err(e) => {
             println!("Server failed to start: {:?}", e);
         }
@@ -114,6 +114,5 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn it_works() {
-    }
+    fn it_works() {}
 }

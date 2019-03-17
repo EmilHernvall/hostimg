@@ -1,13 +1,13 @@
-use std::sync::{RwLock,Arc};
 use std::path::PathBuf;
 use std::result::Result;
+use std::sync::{Arc, RwLock};
 
-use crate::file::ImageGallery;
 use crate::db::DataStore;
+use crate::file::ImageGallery;
 
 pub enum ContextError {
     GalleryAccessError,
-    GalleryNotSetError
+    GalleryNotSetError,
 }
 
 #[derive(Clone)]
@@ -26,7 +26,9 @@ pub struct ServerContext {
 
 impl ServerContext {
     pub fn set_root_gallery(&self, gallery: Arc<ImageGallery>) -> Result<(), ContextError> {
-        let mut root_gallery = self.root_gallery.write()
+        let mut root_gallery = self
+            .root_gallery
+            .write()
             .or(Err(ContextError::GalleryAccessError))?;
 
         *root_gallery = Some(gallery);
@@ -36,13 +38,11 @@ impl ServerContext {
 
     pub fn get_root_gallery(&self) -> Result<Arc<ImageGallery>, ContextError> {
         match self.root_gallery.read() {
-            Ok(ref r) => {
-                match **r {
-                    Some(ref x) => Ok(x.clone()),
-                    None => Err(ContextError::GalleryNotSetError)
-                }
+            Ok(ref r) => match **r {
+                Some(ref x) => Ok(x.clone()),
+                None => Err(ContextError::GalleryNotSetError),
             },
-            Err(_) => Err(ContextError::GalleryAccessError)
+            Err(_) => Err(ContextError::GalleryAccessError),
         }
     }
 }

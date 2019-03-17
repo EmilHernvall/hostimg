@@ -1,23 +1,23 @@
-extern crate sha2;
 extern crate image;
+extern crate sha2;
 
-use std::cmp::{PartialOrd,Ordering};
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::BTreeSet;
 use std::fs::{read_dir, File};
 use std::io::Error as IoError;
 use std::io::Result as IoResult;
-use std::io::{Read, BufReader, ErrorKind};
-use std::path::{Path,PathBuf,Component};
+use std::io::{BufReader, ErrorKind, Read};
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::BTreeSet;
 
-use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent};
-use image::{GenericImage, DynamicImage, ImageResult};
+use image::{DynamicImage, GenericImage, ImageResult};
+use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 use sha2::Digest;
 
-use crate::db::ImageInfo;
 use crate::context::ServerContext;
+use crate::db::ImageInfo;
 
 pub fn open_image(file: &Path) -> ImageResult<DynamicImage> {
     let file_obj = File::open(&file)?;
@@ -28,7 +28,7 @@ pub fn open_image(file: &Path) -> ImageResult<DynamicImage> {
 pub fn hash_file(file: &Path) -> IoResult<String> {
     let mut file_obj = File::open(file)?;
 
-    let mut buffer = [0;4096];
+    let mut buffer = [0; 4096];
     let mut hasher = sha2::Sha256::new();
     while let Ok(bytes_read) = file_obj.read(&mut buffer) {
         if bytes_read == 0 {
@@ -60,29 +60,27 @@ pub struct GalleryScanner {
 
 impl GalleryScanner {
     pub fn new(context: ServerContext) -> GalleryScanner {
-        GalleryScanner {
-            context,
-        }
+        GalleryScanner { context }
     }
 
     pub fn scan(&mut self) -> IoResult<()> {
         let gallery_dir = &self.context.gallery_dir.clone();
 
-        let gallery = Arc::new(self.scan_recursive(gallery_dir,
-                                                   &is_image)?);
+        let gallery = Arc::new(self.scan_recursive(gallery_dir, &is_image)?);
 
-        self.context.set_root_gallery(gallery)
+        self.context
+            .set_root_gallery(gallery)
             .or(build_io_error("Failed to set root gallery"))?;
 
         Ok(())
     }
 
-    fn scan_recursive<F>(&mut self,
-                         dir: &PathBuf,
-                         accept: &F) -> IoResult<ImageGallery>
-        where F: Fn(&Path) -> bool {
-
-        let local_path = dir.strip_prefix(&self.context.gallery_dir)
+    fn scan_recursive<F>(&mut self, dir: &PathBuf, accept: &F) -> IoResult<ImageGallery>
+    where
+        F: Fn(&Path) -> bool,
+    {
+        let local_path = dir
+            .strip_prefix(&self.context.gallery_dir)
             .or(build_io_error("Failed to strip directory prefix"))?
             .to_path_buf();
 
@@ -98,16 +96,16 @@ impl GalleryScanner {
                             new_gallery.imagecount += gallery.imagecount;
                             new_gallery.sub_galleries.insert(Arc::new(gallery));
                         }
-                    },
-                    Err(e) => println!("Failed to add gallery {:?}", e)
+                    }
+                    Err(e) => println!("Failed to add gallery {:?}", e),
                 }
             } else if filetype.is_file() && accept(&p) {
                 match self.add_file(&p) {
                     Ok(info) => {
                         new_gallery.imagecount += 1;
                         new_gallery.images.insert(Arc::new(info));
-                    },
-                    Err(e) => println!("Failed to add image {:?}", e)
+                    }
+                    Err(e) => println!("Failed to add image {:?}", e),
                 }
             }
         }
@@ -118,12 +116,13 @@ impl GalleryScanner {
     fn add_file(&mut self, file: &PathBuf) -> IoResult<ImageInfo> {
         let file_name = match file.to_str() {
             Some(x) => x,
-            None => return build_io_error("Failed to retrieve filename")
+            None => return build_io_error("Failed to retrieve filename"),
         };
 
-        let query_result = self.context.datastore.find_image_by_name(
-            file_name.to_string()
-        )?;
+        let query_result = self
+            .context
+            .datastore
+            .find_image_by_name(file_name.to_string())?;
 
         if let Some(info) = query_result {
             println!("Found {}", &info.name);
@@ -143,7 +142,11 @@ impl GalleryScanner {
 
             let info = match image_file.build_info() {
                 Some(info) => info,
-                None => return build_io_error(format!("Well, this is rather inexplicable. Image: {}", file_name).as_str())
+                None => {
+                    return build_io_error(
+                        format!("Well, this is rather inexplicable. Image: {}", file_name).as_str(),
+                    );
+                }
             };
 
             self.context.datastore.save_image(info.clone())?;
@@ -153,39 +156,47 @@ impl GalleryScanner {
     }
 
     fn handle_update(&mut self, event: DebouncedEvent) -> IoResult<()> {
-        let root_gallery = self.context.get_root_gallery()
+        let root_gallery = self
+            .context
+            .get_root_gallery()
             .or(build_io_error("Failed to get root gallery"))?;
 
         match event {
-            DebouncedEvent::Create(ref path) |
-            DebouncedEvent::Remove(ref path) => {
+            DebouncedEvent::Create(ref path) | DebouncedEvent::Remove(ref path) => {
                 if !is_image(path) {
                     return Ok(());
                 }
 
-                let info = Arc::new(self.add_file(path).or(build_io_error("Failed to add file"))?);
+                let info = Arc::new(
+                    self.add_file(path)
+                        .or(build_io_error("Failed to add file"))?,
+                );
 
-                let parent = match path.parent().and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok()) {
+                let parent = match path
+                    .parent()
+                    .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
+                {
                     Some(x) => x.to_path_buf(),
-                    None => return build_io_error("Path has no parent")
+                    None => return build_io_error("Path has no parent"),
                 };
 
                 let op = match event {
                     DebouncedEvent::Create(_) => {
                         println!("Found new image: {:?}", path);
                         GalleryModification::Add(info)
-                    },
+                    }
                     DebouncedEvent::Remove(_) => {
                         println!("Detected removed image: {:?}", path);
                         GalleryModification::Remove(info)
-                    },
-                    _ => unreachable!()
+                    }
+                    _ => unreachable!(),
                 };
 
                 let new_root = root_gallery.modify(&parent, op)?;
-                self.context.set_root_gallery(new_root)
+                self.context
+                    .set_root_gallery(new_root)
                     .or(build_io_error("Failed to set root gallery"))?;
-            },
+            }
             DebouncedEvent::Rename(ref from_path, ref to_path) => {
                 if !is_image(from_path) {
                     return Ok(());
@@ -193,29 +204,40 @@ impl GalleryScanner {
 
                 println!("Detected rename: {:?} - {:?}", from_path, to_path);
 
-                let from_info = Arc::new(self.add_file(from_path).or(build_io_error("Failed to add file"))?);
-                let from_parent = match from_path.parent().and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok()) {
+                let from_info = Arc::new(
+                    self.add_file(from_path)
+                        .or(build_io_error("Failed to add file"))?,
+                );
+                let from_parent = match from_path
+                    .parent()
+                    .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
+                {
                     Some(x) => x.to_path_buf(),
-                    None => return build_io_error("Path has no parent")
+                    None => return build_io_error("Path has no parent"),
                 };
 
-                let to_info = Arc::new(self.add_file(to_path).or(build_io_error("Failed to add file"))?);
-                let to_parent = match to_path.parent().and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok()) {
+                let to_info = Arc::new(
+                    self.add_file(to_path)
+                        .or(build_io_error("Failed to add file"))?,
+                );
+                let to_parent = match to_path
+                    .parent()
+                    .and_then(|x| x.strip_prefix(&self.context.gallery_dir).ok())
+                {
                     Some(x) => x.to_path_buf(),
-                    None => return build_io_error("Path has no parent")
+                    None => return build_io_error("Path has no parent"),
                 };
 
-                let new_root = root_gallery.modify(&from_parent, GalleryModification::Remove(from_info))?
-                                           .modify(&to_parent, GalleryModification::Add(to_info))?;
-                self.context.set_root_gallery(new_root)
+                let new_root = root_gallery
+                    .modify(&from_parent, GalleryModification::Remove(from_info))?
+                    .modify(&to_parent, GalleryModification::Add(to_info))?;
+                self.context
+                    .set_root_gallery(new_root)
                     .or(build_io_error("Failed to set root gallery"))?;
-            },
-            DebouncedEvent::Write(_) => {
-            },
-            DebouncedEvent::Rescan => {
-            },
-            _ => {
             }
+            DebouncedEvent::Write(_) => {}
+            DebouncedEvent::Rescan => {}
+            _ => {}
         }
 
         Ok(())
@@ -224,18 +246,20 @@ impl GalleryScanner {
     pub fn monitor(mut self) -> IoResult<()> {
         let (tx, rx) = channel();
 
-        let mut watcher = watcher(tx, Duration::from_secs(10))
-            .or(build_io_error("Failed to create watcher"))?;
-        watcher.watch(&self.context.gallery_dir, RecursiveMode::Recursive)
+        let mut watcher =
+            watcher(tx, Duration::from_secs(10)).or(build_io_error("Failed to create watcher"))?;
+        watcher
+            .watch(&self.context.gallery_dir, RecursiveMode::Recursive)
             .or(build_io_error("Failed to register watch"))?;
 
         loop {
-            match rx.recv()
+            match rx
+                .recv()
                 .or(build_io_error("Failed to read event"))
-                .and_then(|event| self.handle_update(event)) {
-
-                Ok(_) => {},
-                Err(e) => println!("Watch error: {:?}", e)
+                .and_then(|event| self.handle_update(event))
+            {
+                Ok(_) => {}
+                Err(e) => println!("Watch error: {:?}", e),
             }
         }
     }
@@ -249,7 +273,7 @@ pub struct ImageGallery {
     pub path: PathBuf,
     pub sub_galleries: BTreeSet<Arc<ImageGallery>>,
     pub images: BTreeSet<Arc<ImageInfo>>,
-    pub imagecount: u32
+    pub imagecount: u32,
 }
 
 impl Ord for ImageGallery {
@@ -270,13 +294,12 @@ impl PartialEq for ImageGallery {
     }
 }
 
-impl Eq for ImageGallery {
-}
+impl Eq for ImageGallery {}
 
 #[derive(Clone)]
 pub enum GalleryModification {
     Add(Arc<ImageInfo>),
-    Remove(Arc<ImageInfo>)
+    Remove(Arc<ImageInfo>),
 }
 
 impl ImageGallery {
@@ -285,34 +308,40 @@ impl ImageGallery {
             path: path,
             sub_galleries: BTreeSet::new(),
             images: BTreeSet::new(),
-            imagecount: 0
+            imagecount: 0,
         }
     }
 
     pub fn get_name(&self) -> String {
-        self.path.file_name()
+        self.path
+            .file_name()
             .and_then(|x| x.to_str())
             .map(|x| x.to_string())
             .unwrap_or("".to_string())
     }
 
     pub fn get_parent(&self) -> Option<String> {
-        self.path.parent()
+        self.path
+            .parent()
             .and_then(|x| x.to_str())
             .map(|x| x.to_string())
     }
 
     pub fn get_path(&self) -> String {
-        self.path.to_str()
+        self.path
+            .to_str()
             .map(|x| x.to_string())
             .unwrap_or("".to_string())
     }
 
     fn build_next_path_step(&self, dir_path: &PathBuf) -> Option<PathBuf> {
-        let next_component = match dir_path.strip_prefix(&self.path).ok()
-            .and_then(|x| x.components().next()) {
+        let next_component = match dir_path
+            .strip_prefix(&self.path)
+            .ok()
+            .and_then(|x| x.components().next())
+        {
             Some(x) => x,
-            None => return None
+            None => return None,
         };
 
         match next_component {
@@ -321,12 +350,16 @@ impl ImageGallery {
                 new_subpath.push(next_component);
 
                 Some(new_subpath)
-            },
-            _ => None
+            }
+            _ => None,
         }
     }
 
-    pub fn modify(&self, dir_path: &PathBuf, op: GalleryModification) -> IoResult<Arc<ImageGallery>> {
+    pub fn modify(
+        &self,
+        dir_path: &PathBuf,
+        op: GalleryModification,
+    ) -> IoResult<Arc<ImageGallery>> {
         let mut new_self = ImageGallery::new(self.path.clone());
         let mut found_gallery = false;
         for subgallery in &self.sub_galleries {
@@ -353,24 +386,25 @@ impl ImageGallery {
                 GalleryModification::Add(info) => {
                     new_self.images.insert(info.clone());
                     new_self.imagecount += 1;
-                },
+                }
                 GalleryModification::Remove(info) => {
                     if new_self.images.remove(&info) {
                         new_self.imagecount -= 1;
                     }
                 }
             }
-
         } else if !found_gallery {
             match self.build_next_path_step(dir_path) {
                 Some(new_subpath) => {
-                    let new_subgallery = ImageGallery::new(new_subpath)
-                        .modify(dir_path, op.clone())?;
+                    let new_subgallery =
+                        ImageGallery::new(new_subpath).modify(dir_path, op.clone())?;
                     new_self.imagecount += new_subgallery.imagecount;
                     new_self.sub_galleries.insert(new_subgallery);
-                },
+                }
                 None => {
-                    return build_io_error("Failed to find next path step when rebuilding gallery structure");
+                    return build_io_error(
+                        "Failed to find next path step when rebuilding gallery structure",
+                    );
                 }
             }
         }
@@ -385,7 +419,7 @@ impl ImageGallery {
             } else if search_path.starts_with(&gallery.path) {
                 match gallery.find_gallery_from_name(search_path) {
                     Some(x) => return Some(x),
-                    None => continue
+                    None => continue,
                 }
             }
         }
@@ -397,19 +431,18 @@ impl ImageGallery {
 pub struct ImageFile {
     pub path: PathBuf,
     pub image: DynamicImage,
-    pub hash: String
+    pub hash: String,
 }
 
 impl ImageFile {
     pub fn build_from_path(file: &PathBuf) -> IoResult<ImageFile> {
-        let img = open_image(file)
-            .or(build_io_error("Failed to open image"))?;
+        let img = open_image(file).or(build_io_error("Failed to open image"))?;
         let hash = hash_file(file)?;
 
         Ok(ImageFile {
             path: file.clone(),
             image: img,
-            hash: hash
+            hash: hash,
         })
     }
 
@@ -421,17 +454,23 @@ impl ImageFile {
             return Ok(());
         }
 
-        let preview = self.image.resize(max_width, max_height, image::FilterType::CatmullRom);
+        let preview = self
+            .image
+            .resize(max_width, max_height, image::FilterType::CatmullRom);
         File::create(&name).and_then(|mut file| {
-            preview.save(&mut file, image::ImageFormat::JPEG)
-                 .or(Err(IoError::new(ErrorKind::Other, "Failed to write image data")))
+            preview
+                .save(&mut file, image::ImageFormat::JPEG)
+                .or(Err(IoError::new(
+                    ErrorKind::Other,
+                    "Failed to write image data",
+                )))
         })
     }
 
     pub fn build_info(&self) -> Option<ImageInfo> {
         let file_name = match self.path.to_str() {
             Some(x) => x,
-            None => return None
+            None => return None,
         };
 
         let (width, height) = self.image.dimensions();
@@ -441,7 +480,7 @@ impl ImageFile {
             hash: self.hash.clone(),
             width: width,
             height: height,
-            img_type: "JPEG".to_string()
+            img_type: "JPEG".to_string(),
         })
     }
 }
