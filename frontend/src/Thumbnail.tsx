@@ -3,6 +3,7 @@ import Image from './model/Image';
 import './Thumbnail.css';
 
 export interface ThumbnailProps {
+    host: string;
     image: Image;
     width: number;
     height: number;
@@ -10,20 +11,20 @@ export interface ThumbnailProps {
 }
 
 class Thumbnail extends React.Component<ThumbnailProps, any> {
-  constructor(props: ThumbnailProps) {
-    super(props);
-    this.state = { };
-  }
+    constructor(props: ThumbnailProps) {
+        super(props);
+        this.state = { };
+    }
 
-  public render() {
-    const { image, width, height, onClick } = this.props;
+    public render() {
+        const { host, image, width, height, onClick } = this.props;
 
-    return (
-      <div className="thumbnail">
-        <img src={ `http://localhost:1080/image/${image.hash}/thumb` } width={ width } height={ height } onClick={ () => onClick(image) }/>
-      </div>
-    );
-  }
+        return (
+            <div className="thumbnail">
+                <img src={ `http://${host}/image/${image.hash}/thumb` } width={ width } height={ height } onClick={ () => onClick(image) }/>
+            </div>
+        );
+    }
 }
 
 export default Thumbnail;
