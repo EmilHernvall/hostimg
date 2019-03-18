@@ -55,6 +55,7 @@ pub fn run_server(context: ServerContext) {
     lazy_static!{
         static ref GALLERY_PATTERN : Regex = Regex::new(r"^/gallery$|^/gallery/(.*)$").unwrap();
         static ref IMAGE_PATTERN : Regex = Regex::new(r"^/image/(.+)/(.+)$").unwrap();
+        static ref IMAGE_META_PATTERN : Regex = Regex::new(r"^/image/meta/([0-9]+)$").unwrap();
     }
 
     let webserver = match Server::http(("0.0.0.0", context.port)) {
@@ -98,6 +99,10 @@ pub fn run_server(context: ServerContext) {
                 let img_size = caps.get(2).map(|x| x.as_str()).unwrap_or("thumb");
 
                 gallery::image_action(context, hash, img_size)
+            } else if let Some(caps) = IMAGE_META_PATTERN.captures(&url) {
+                let id = caps.get(1).map(|x| x.as_str());
+
+                gallery::image_meta_action(context, id)
             } else {
                 Ok(Response::empty(StatusCode(404)).boxed())
             };

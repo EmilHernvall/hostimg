@@ -117,3 +117,34 @@ pub fn image_action(
 
     Ok(response.boxed())
 }
+
+pub fn image_meta_action(
+    context: ServerContext,
+    id: Option<&str>,
+) -> Result<ResponseBox, WebError> {
+
+    let id : u32 = id.and_then(|id| id.parse().ok())
+        .ok_or(WebError::MissingParam)?;
+
+    let image = context.datastore.find_image_by_id(id)
+        .map_err(|e| WebError::Other(Box::new(e)))?;
+
+    let result_obj = json!({
+        "image": image,
+    });
+
+    let json_data = serde_json::to_string(&result_obj)
+        .map_err(|e| WebError::Other(Box::new(e)))?;
+
+    let mut response = Response::from_string(json_data);
+    response.add_header(Header{
+        field: "Access-Control-Allow-Origin".parse::<HeaderField>().unwrap(),
+        value: "*".parse().unwrap()
+    });
+    response.add_header(Header{
+        field: "Content-Type".parse::<HeaderField>().unwrap(),
+        value: "application/json".parse().unwrap()
+    });
+
+    Ok(response.boxed())
+}

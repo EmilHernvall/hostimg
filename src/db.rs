@@ -5,10 +5,13 @@ use std::rc::Rc;
 use std::result::Result;
 use std::sync::mpsc;
 use std::thread;
+use std::fmt;
+
+use serde_derive::Serialize;
 
 use rusqlite::Connection;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct ImageInfo {
     pub id: u32,
     pub name: String,
@@ -51,6 +54,18 @@ pub enum DataStoreError {
     ChannelReceive(Box<dyn Error + Send + Sync + 'static>),
 }
 
+impl Error for DataStoreError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
+impl fmt::Display for DataStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Clone)]
 pub struct DataStore {
     channel: mpsc::Sender<DbClosure>,
@@ -83,31 +98,15 @@ impl DataStore {
         Ok(DataStore { channel })
     }
 
-    pub fn find_image_by_name(&self, name: String) -> Result<Option<ImageInfo>, DataStoreError> {
-        let (sender, receiver) = mpsc::channel::<Result<Vec<ImageInfo>, DataStoreError>>();
+    pub fn with_conn<F, T>(&self, callback: F) -> Result<T, DataStoreError>
+        where F: Fn(Rc<Connection>) -> Result<T, DataStoreError> + Send + 'static,
+              T: Send + 'static
+    {
+        let (sender, receiver) = mpsc::channel::<Result<T, DataStoreError>>();
 
         self.channel
             .send(Box::new(move |conn: Rc<Connection>| {
-                let sql = "SELECT * FROM image WHERE image_name = ?1";
-                let res = conn
-                    .prepare(sql)
-                    .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
-                    .and_then(|mut stmt| {
-                        let mapped_rows = stmt
-                            .query_map(&[&name], |row| ImageInfo {
-                                id: row.get(0),
-                                name: row.get(1),
-                                hash: row.get(2),
-                                width: row.get(3),
-                                height: row.get(4),
-                                img_type: row.get(5),
-                            })
-                            .map_err(|e| DataStoreError::QueryMap(e))?;
-
-                        mapped_rows
-                            .map(|item| item.map_err(|e| DataStoreError::RowMap(e)))
-                            .collect::<Result<Vec<ImageInfo>, DataStoreError>>()
-                    });
+                let res = callback(conn);
 
                 if let Err(e) = sender.send(res) {
                     eprintln!("Failed to send datastore result: {:?}", e);
@@ -118,37 +117,72 @@ impl DataStore {
         receiver
             .recv()
             .map_err(|e| DataStoreError::ChannelReceive(Box::new(e)))?
-            .map(|res| res.into_iter().next())
+    }
+
+
+    pub fn find_image_by_id(&self, id: u32) -> Result<Option<ImageInfo>, DataStoreError> {
+        self.with_conn(move |conn: Rc<Connection>| {
+            let sql = "SELECT * FROM image WHERE image_id = ?1";
+            conn
+                .prepare(sql)
+                .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
+                .and_then(|mut stmt| {
+                    stmt
+                        .query_map(&[&id], |row| ImageInfo {
+                            id: row.get(0),
+                            name: row.get(1),
+                            hash: row.get(2),
+                            width: row.get(3),
+                            height: row.get(4),
+                            img_type: row.get(5),
+                        })
+                        .map_err(|e| DataStoreError::QueryMap(e))?
+                        .map(|item| item.map_err(|e| DataStoreError::RowMap(e)))
+                        .collect::<Result<Vec<ImageInfo>, DataStoreError>>()
+                })
+        })
+        .map(|res| res.into_iter().next())
+    }
+
+    pub fn find_image_by_name(&self, name: String) -> Result<Option<ImageInfo>, DataStoreError> {
+        self.with_conn(move |conn: Rc<Connection>| {
+            let sql = "SELECT * FROM image WHERE image_name = ?1";
+            conn
+                .prepare(sql)
+                .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
+                .and_then(|mut stmt| {
+                    stmt
+                        .query_map(&[&name], |row| ImageInfo {
+                            id: row.get(0),
+                            name: row.get(1),
+                            hash: row.get(2),
+                            width: row.get(3),
+                            height: row.get(4),
+                            img_type: row.get(5),
+                        })
+                        .map_err(|e| DataStoreError::QueryMap(e))?
+                        .map(|item| item.map_err(|e| DataStoreError::RowMap(e)))
+                        .collect::<Result<Vec<ImageInfo>, DataStoreError>>()
+                })
+        })
+        .map(|res| res.into_iter().next())
     }
 
     pub fn save_image(&self, info: ImageInfo) -> Result<i32, DataStoreError> {
-        let (sender, receiver) = mpsc::channel();
+        self.with_conn(move |conn: Rc<Connection>| {
+            let sql = "INSERT INTO image (image_name, image_hash, image_width, image_height, image_type) VALUES (?1, ?2, ?3, ?4, ?5)";
 
-        self.channel
-            .send(Box::new(move |conn: Rc<Connection>| {
-                let sql = "INSERT INTO image (image_name, image_hash, image_width, image_height, image_type) VALUES (?1, ?2, ?3, ?4, ?5)";
-
-                let res = conn
-                    .execute(
-                        sql,
-                        &[
-                            &info.name,
-                            &info.hash,
-                            &info.width,
-                            &info.height,
-                            &info.img_type,
-                        ],
-                    )
-                    .map_err(|e| DataStoreError::Execute(sql.to_string(), e));
-
-                if let Err(e) = sender.send(res) {
-                    eprintln!("Failed to send datastore result: {:?}", e);
-                }
-            }))
-            .map_err(|_e| DataStoreError::ChannelSend)?;
-
-        receiver
-            .recv()
-            .map_err(|e| DataStoreError::ChannelReceive(Box::new(e)))?
+            conn.execute(
+                sql,
+                &[
+                    &info.name,
+                    &info.hash,
+                    &info.width,
+                    &info.height,
+                    &info.img_type,
+                ],
+            )
+            .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
+        })
     }
 }
