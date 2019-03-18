@@ -26,6 +26,7 @@
     flex: 1;
     padding: 0;
     font-size: 0;
+    overflow: hidden;
 }
 .row {
     width: 100%;

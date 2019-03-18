@@ -38,16 +38,22 @@ class App extends React.Component<any, AppState> {
     }
 
     public componentDidMount() {
-        const width = this.ref.current.offsetWidth;
-        this.setState({ width });
+        this.onSizeChanged();
 
         this.loadGallery(this.state.path);
 
-        window.addEventListener("hashchange", e => {
+        window.addEventListener("resize", (e) => this.onSizeChanged());
+
+        window.addEventListener("hashchange", (e) => {
             const path = window.location.hash.substring(1);
             console.log("new hash: " + path);
             this.loadGallery(path);
         });
+    }
+
+    private onSizeChanged() {
+        const width = this.ref.current.offsetWidth;
+        this.setState({ width });
     }
 
     private buildRow(workingset: Image[], height: number) {
@@ -77,7 +83,7 @@ class App extends React.Component<any, AppState> {
 
         let workingset: Image[] = [];
         let aspectSum = 0;
-        const lastIdx    = gallery.images.length - 1;
+        const lastIdx = gallery.images.length - 1;
         for (let [idx, image] of gallery.images.entries()) {
             aspectSum += image.width/image.height;
             workingset.push(image);
