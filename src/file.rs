@@ -559,11 +559,15 @@ impl ImageFile {
         let (width, height) = self.image.dimensions();
         Ok(ImageInfo {
             id: 0,
+            location_id: None,
             name: file_name.to_string(),
             hash: self.hash.clone(),
             width: width,
             height: height,
             img_type: "JPEG".to_string(),
+            caption: "".to_string(),
+            description: "".to_string(),
+            rating: 0,
         })
     }
 }

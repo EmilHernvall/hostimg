@@ -11,14 +11,39 @@ use serde_derive::Serialize;
 
 use rusqlite::{Connection, Row, types::ToSql};
 
+pub trait IntoModel {
+    fn into(row: &Row) -> Self;
+}
+
+#[derive(Clone, Serialize)]
+pub struct User {
+    pub id: u32,
+    pub name: String,
+    pub password: String,
+}
+
+impl IntoModel for User {
+    fn into(row: &Row) -> User {
+        User {
+            id: row.get("user_id"),
+            name: row.get("user_name"),
+            password: row.get("user_password"),
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 pub struct ImageInfo {
     pub id: u32,
+    pub location_id: Option<u32>,
     pub name: String,
     pub hash: String,
     pub width: u32,
     pub height: u32,
     pub img_type: String,
+    pub caption: String,
+    pub description: String,
+    pub rating: u32,
 }
 
 impl Ord for ImageInfo {
@@ -40,6 +65,89 @@ impl PartialEq for ImageInfo {
 }
 
 impl Eq for ImageInfo {}
+
+impl IntoModel for ImageInfo {
+    fn into(row: &Row) -> ImageInfo {
+        ImageInfo {
+            id: row.get("image_id"),
+            location_id: row.get("location_id"),
+            name: row.get("image_name"),
+            hash: row.get("image_hash"),
+            width: row.get("image_width"),
+            height: row.get("image_height"),
+            img_type: row.get("image_type"),
+            caption: row.get("image_caption"),
+            description: row.get("image_description"),
+            rating: row.get("image_rating"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct Comment {
+    pub id: u32,
+    pub image_id: u32,
+    pub user_id: u32,
+    pub timestamp: u32, // TODO: use proper type
+    pub text: String,
+}
+
+impl IntoModel for Comment {
+    fn into(row: &Row) -> Comment {
+        Comment {
+            id: row.get("comment_id"),
+            image_id: row.get("image_id"),
+            user_id: row.get("user_id"),
+            timestamp: row.get("comment_timestamp"),
+            text: row.get("comment_text"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct Tag {
+    pub id: u32,
+    pub name: String,
+}
+
+impl IntoModel for Tag {
+    fn into(row: &Row) -> Tag {
+        Tag {
+            id: row.get("tag_id"),
+            name: row.get("tag_name"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct Person {
+    pub id: u32,
+    pub name: String,
+}
+
+impl IntoModel for Person {
+    fn into(row: &Row) -> Person {
+        Person {
+            id: row.get("person_id"),
+            name: row.get("person_name"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct Location {
+    pub id: u32,
+    pub name: String,
+}
+
+impl IntoModel for Location {
+    fn into(row: &Row) -> Location {
+        Location {
+            id: row.get("location_id"),
+            name: row.get("location_name"),
+        }
+    }
+}
 
 type DbClosure = Box<dyn Fn(Rc<Connection>) + Send + 'static>;
 
@@ -63,23 +171,6 @@ impl Error for DataStoreError {
 impl fmt::Display for DataStoreError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
-    }
-}
-
-pub trait IntoModel {
-    fn into(row: &Row) -> Self;
-}
-
-impl IntoModel for ImageInfo {
-    fn into(row: &Row) -> ImageInfo {
-        ImageInfo {
-            id: row.get(0),
-            name: row.get(1),
-            hash: row.get(2),
-            width: row.get(3),
-            height: row.get(4),
-            img_type: row.get(5),
-        }
     }
 }
 
