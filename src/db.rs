@@ -9,7 +9,7 @@ use std::fmt;
 
 use serde_derive::Serialize;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, Row, types::ToSql};
 
 #[derive(Clone, Serialize)]
 pub struct ImageInfo {
@@ -66,6 +66,54 @@ impl fmt::Display for DataStoreError {
     }
 }
 
+pub trait IntoModel {
+    fn into(row: &Row) -> Self;
+}
+
+impl IntoModel for ImageInfo {
+    fn into(row: &Row) -> ImageInfo {
+        ImageInfo {
+            id: row.get(0),
+            name: row.get(1),
+            hash: row.get(2),
+            width: row.get(3),
+            height: row.get(4),
+            img_type: row.get(5),
+        }
+    }
+}
+
+pub trait Queryable {
+    fn query_one<T>(&self, sql: &str, params: &[&ToSql]) -> Result<Option<T>, DataStoreError>
+        where T: IntoModel;
+    fn query_many<T>(&self, sql: &str, params: &[&ToSql]) -> Result<Vec<T>, DataStoreError>
+        where T: IntoModel;
+}
+
+impl Queryable for Connection {
+    fn query_many<T>(&self, sql: &str, params: &[&ToSql]) -> Result<Vec<T>, DataStoreError>
+        where T: IntoModel
+    {
+        self
+            .prepare(sql)
+            .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
+            .and_then(|mut stmt| {
+                stmt
+                    .query_map(params, |row| IntoModel::into(row))
+                    .map_err(|e| DataStoreError::QueryMap(e))?
+                    .map(|item| item.map_err(|e| DataStoreError::RowMap(e)))
+                    .collect::<Result<Vec<_>, DataStoreError>>()
+            })
+    }
+
+    fn query_one<T>(&self, sql: &str, params: &[&ToSql]) -> Result<Option<T>, DataStoreError>
+        where T: IntoModel
+    {
+        self.query_many(sql, params)
+            .map(|res| res.into_iter().next())
+    }
+}
+
 #[derive(Clone)]
 pub struct DataStore {
     channel: mpsc::Sender<DbClosure>,
@@ -119,53 +167,16 @@ impl DataStore {
             .map_err(|e| DataStoreError::ChannelReceive(Box::new(e)))?
     }
 
-
     pub fn find_image_by_id(&self, id: u32) -> Result<Option<ImageInfo>, DataStoreError> {
         self.with_conn(move |conn: Rc<Connection>| {
-            let sql = "SELECT * FROM image WHERE image_id = ?1";
-            conn
-                .prepare(sql)
-                .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
-                .and_then(|mut stmt| {
-                    stmt
-                        .query_map(&[&id], |row| ImageInfo {
-                            id: row.get(0),
-                            name: row.get(1),
-                            hash: row.get(2),
-                            width: row.get(3),
-                            height: row.get(4),
-                            img_type: row.get(5),
-                        })
-                        .map_err(|e| DataStoreError::QueryMap(e))?
-                        .map(|item| item.map_err(|e| DataStoreError::RowMap(e)))
-                        .collect::<Result<Vec<ImageInfo>, DataStoreError>>()
-                })
+            conn.query_one("SELECT * FROM image WHERE image_id = ?1", &[&id])
         })
-        .map(|res| res.into_iter().next())
     }
 
     pub fn find_image_by_name(&self, name: String) -> Result<Option<ImageInfo>, DataStoreError> {
         self.with_conn(move |conn: Rc<Connection>| {
-            let sql = "SELECT * FROM image WHERE image_name = ?1";
-            conn
-                .prepare(sql)
-                .map_err(|e| DataStoreError::Execute(sql.to_string(), e))
-                .and_then(|mut stmt| {
-                    stmt
-                        .query_map(&[&name], |row| ImageInfo {
-                            id: row.get(0),
-                            name: row.get(1),
-                            hash: row.get(2),
-                            width: row.get(3),
-                            height: row.get(4),
-                            img_type: row.get(5),
-                        })
-                        .map_err(|e| DataStoreError::QueryMap(e))?
-                        .map(|item| item.map_err(|e| DataStoreError::RowMap(e)))
-                        .collect::<Result<Vec<ImageInfo>, DataStoreError>>()
-                })
+            conn.query_one("SELECT * FROM image WHERE image_name = ?1", &[&name])
         })
-        .map(|res| res.into_iter().next())
     }
 
     pub fn save_image(&self, info: ImageInfo) -> Result<i32, DataStoreError> {
